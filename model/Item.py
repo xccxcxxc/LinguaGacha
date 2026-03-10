@@ -23,7 +23,8 @@ TOKEN_ENCODING = tiktoken.get_encoding(TOKEN_ENCODING_NAME)
 
 @lru_cache(maxsize=TOKEN_COUNT_CACHE_MAXSIZE)
 def get_token_count_from_text(text: str) -> int:
-    return len(TOKEN_ENCODING.encode(text))
+    # disallowed_special=() 避免文本中包含形如 <|endoftext|> 的字符串时抛出异常
+    return len(TOKEN_ENCODING.encode(text, disallowed_special=()))
 
 
 @dataclasses.dataclass
