@@ -306,7 +306,7 @@ class Item:
 
         # 长文本跳过全局缓存，避免内存膨胀
         if len(src) > TOKEN_COUNT_CACHE_TEXT_LIMIT:
-            token_count = len(TOKEN_ENCODING.encode(src))
+            token_count = len(TOKEN_ENCODING.encode(src, disallowed_special=()))
         else:
             token_count = get_token_count_from_text(src)
 
