@@ -308,3 +308,33 @@ jobs:
             ./artifacts/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_macOS_x86_64/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_macOS_x86_64.dmg
             ./artifacts/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_macOS_arm64/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_macOS_arm64.dmg
             ./artifacts/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_Linux_x86_64/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_Linux_x86_64.AppImage
+
+  notify:
+    needs: [prepare, build-windows, build-macos, build-linux, create-release]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Notify Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then exit 0; fi
+          BUILD_STATUS="${{ needs.build-windows.result }}/${{ needs.build-macos.result }}/${{ needs.build-linux.result }}"
+          if [ "${{ needs.build-windows.result }}" = "success" ] && \
+             [ "${{ needs.build-macos.result }}" = "success" ] && \
+             [ "${{ needs.build-linux.result }}" = "success" ]; then
+            ICON="✅"
+            STATUS="success"
+          else
+            ICON="❌"
+            STATUS="failed"
+          fi
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TEXT="[GitHub] $ICON LinguaGacha build $STATUS
+Version: $VERSION
+Windows/macOS/Linux: $BUILD_STATUS"
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d text="$TEXT" > /dev/null
