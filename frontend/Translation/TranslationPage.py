@@ -320,7 +320,9 @@ class TranslationPage(Base, QWidget):
 
         if display_mode == self.TokenDisplayMode.OUTPUT:
             token = self.data.get("total_output_tokens", 0)
-            self.token.set_title(Localizer.get().translation_page_card_token_output)
+            self.token.title_label.setText(
+                Localizer.get().translation_page_card_token_output
+            )
         elif display_mode == self.TokenDisplayMode.INPUT:
             # 兼容旧版本进度字段：若无 total_input_tokens，则用 total_tokens - total_output_tokens 估算
             token = self.data.get("total_input_tokens", 0)
@@ -328,10 +330,14 @@ class TranslationPage(Base, QWidget):
                 token = self.data.get("total_tokens", 0) - self.data.get(
                     "total_output_tokens", 0
                 )
-            self.token.set_title(Localizer.get().translation_page_card_token_input)
+            self.token.title_label.setText(
+                Localizer.get().translation_page_card_token_input
+            )
         else:
             token = self.data.get("total_tokens", 0)
-            self.token.set_title(Localizer.get().translation_page_card_token_total)
+            self.token.title_label.setText(
+                Localizer.get().translation_page_card_token_total
+            )
 
         self.set_scaled_card_value(self.token, token, "Token")
 
