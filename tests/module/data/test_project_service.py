@@ -3,8 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from base.BasePath import BasePath
 from model.Item import Item
-from module.Data.ProjectService import ProjectService
+from module.Data.Project.ProjectService import ProjectService
 
 
 def test_is_supported_file_is_case_insensitive() -> None:
@@ -73,7 +74,9 @@ def test_get_project_preview_reads_summary(monkeypatch: pytest.MonkeyPatch, fs) 
     lg_path.write_bytes(b"db")
 
     fake_db = SimpleNamespace(get_project_summary=lambda: {"name": "demo"})
-    monkeypatch.setattr("module.Data.ProjectService.LGDatabase", lambda path: fake_db)
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.LGDatabase", lambda path: fake_db
+    )
 
     summary = service.get_project_preview(str(lg_path))
     assert summary == {"name": "demo"}
@@ -120,7 +123,7 @@ class DummyLocalizer:
     toast_processing = "processing"
     engine_task_rule_filter = "rule {COUNT}"
     engine_task_language_filter = "lang {COUNT}"
-    translator_mtool_optimizer_pre_log = "mtool {COUNT}"
+    translation_mtool_optimizer_pre_log = "mtool {COUNT}"
 
 
 class FakeDB:
@@ -143,8 +146,8 @@ def test_create_ingests_assets_parses_items_and_writes_meta(
     fs, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     del fs
-    monkeypatch.delenv("LINGUAGACHA_DATA_DIR", raising=False)
-    monkeypatch.setenv("LINGUAGACHA_APP_DIR", "/workspace/app")
+    BasePath.reset_for_test()
+    BasePath.initialize("/workspace/app", False)
 
     service = ProjectService()
     progress: list[tuple[int, int, str]] = []
@@ -162,12 +165,14 @@ def test_create_ingests_assets_parses_items_and_writes_meta(
     logger = DummyLogger()
 
     monkeypatch.setattr(
-        "module.Data.ProjectService.LGDatabase.create",
+        "module.Data.Project.ProjectService.LGDatabase.create",
         lambda output_path, project_name: fake_db,
     )
-    monkeypatch.setattr("module.Data.ProjectService.LogManager.get", lambda: logger)
     monkeypatch.setattr(
-        "module.Data.ProjectService.Localizer.get", lambda: DummyLocalizer()
+        "module.Data.Project.ProjectService.LogManager.get", lambda: logger
+    )
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.Localizer.get", lambda: DummyLocalizer()
     )
 
     compressed_inputs: list[bytes] = []
@@ -176,7 +181,9 @@ def test_create_ingests_assets_parses_items_and_writes_meta(
         compressed_inputs.append(data)
         return b"z" + data
 
-    monkeypatch.setattr("module.Data.ProjectService.ZstdCodec.compress", fake_compress)
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.ZstdTool.compress", fake_compress
+    )
 
     class FakeFileManager:
         def __init__(self, config) -> None:
@@ -196,7 +203,9 @@ def test_create_ingests_assets_parses_items_and_writes_meta(
                 )
             ]
 
-    monkeypatch.setattr("module.Data.ProjectService.FileManager", FakeFileManager)
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.FileManager", FakeFileManager
+    )
 
     prefilter_calls: list[dict[str, object]] = []
 
@@ -210,7 +219,9 @@ def test_create_ingests_assets_parses_items_and_writes_meta(
             prefilter_config={"demo": True},
         )
 
-    monkeypatch.setattr("module.Data.ProjectService.ProjectPrefilter.apply", fake_apply)
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.ProjectPrefilter.apply", fake_apply
+    )
 
     def init_rules(db) -> list[str]:
         assert db is fake_db
@@ -242,7 +253,8 @@ def test_create_skips_read_failures_and_continues(
     fs, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     del fs
-    monkeypatch.setenv("LINGUAGACHA_APP_DIR", "/workspace/app")
+    BasePath.reset_for_test()
+    BasePath.initialize("/workspace/app", False)
 
     service = ProjectService()
     src_dir = Path("/workspace/project_service/src")
@@ -259,15 +271,18 @@ def test_create_skips_read_failures_and_continues(
     logger = DummyLogger()
 
     monkeypatch.setattr(
-        "module.Data.ProjectService.LGDatabase.create",
+        "module.Data.Project.ProjectService.LGDatabase.create",
         lambda output_path, project_name: fake_db,
     )
-    monkeypatch.setattr("module.Data.ProjectService.LogManager.get", lambda: logger)
     monkeypatch.setattr(
-        "module.Data.ProjectService.Localizer.get", lambda: DummyLocalizer()
+        "module.Data.Project.ProjectService.LogManager.get", lambda: logger
     )
     monkeypatch.setattr(
-        "module.Data.ProjectService.ProjectPrefilter.apply", lambda **kwargs: None
+        "module.Data.Project.ProjectService.Localizer.get", lambda: DummyLocalizer()
+    )
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.ProjectPrefilter.apply",
+        lambda **kwargs: None,
     )
 
     class FakeFileManager:
@@ -279,8 +294,12 @@ def test_create_skips_read_failures_and_continues(
             del original_data
             return []
 
-    monkeypatch.setattr("module.Data.ProjectService.FileManager", FakeFileManager)
-    monkeypatch.setattr("module.Data.ProjectService.ZstdCodec.compress", lambda b: b"z")
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.FileManager", FakeFileManager
+    )
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.ZstdTool.compress", lambda b: b"z"
+    )
 
     real_open = open
 
@@ -302,7 +321,8 @@ def test_create_logs_parse_errors_but_keeps_asset(
     fs, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     del fs
-    monkeypatch.setenv("LINGUAGACHA_APP_DIR", "/workspace/app")
+    BasePath.reset_for_test()
+    BasePath.initialize("/workspace/app", False)
 
     service = ProjectService()
     src_dir = Path("/workspace/project_service/src")
@@ -316,12 +336,14 @@ def test_create_logs_parse_errors_but_keeps_asset(
     logger = DummyLogger()
 
     monkeypatch.setattr(
-        "module.Data.ProjectService.LGDatabase.create",
+        "module.Data.Project.ProjectService.LGDatabase.create",
         lambda output_path, project_name: fake_db,
     )
-    monkeypatch.setattr("module.Data.ProjectService.LogManager.get", lambda: logger)
     monkeypatch.setattr(
-        "module.Data.ProjectService.Localizer.get", lambda: DummyLocalizer()
+        "module.Data.Project.ProjectService.LogManager.get", lambda: logger
+    )
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.Localizer.get", lambda: DummyLocalizer()
     )
 
     class FakeFileManager:
@@ -333,8 +355,12 @@ def test_create_logs_parse_errors_but_keeps_asset(
             del original_data
             raise ValueError("parse failed")
 
-    monkeypatch.setattr("module.Data.ProjectService.FileManager", FakeFileManager)
-    monkeypatch.setattr("module.Data.ProjectService.ZstdCodec.compress", lambda b: b"z")
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.FileManager", FakeFileManager
+    )
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.ZstdTool.compress", lambda b: b"z"
+    )
 
     service.create(source_path=str(src_dir), output_path=str(out_path))
 
@@ -347,7 +373,8 @@ def test_create_logs_mtool_prefilter_count_when_optimizer_enabled(
     fs, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     del fs
-    monkeypatch.setenv("LINGUAGACHA_APP_DIR", "/workspace/app")
+    BasePath.reset_for_test()
+    BasePath.initialize("/workspace/app", False)
 
     service = ProjectService()
     src_dir = Path("/workspace/project_service/src")
@@ -361,12 +388,14 @@ def test_create_logs_mtool_prefilter_count_when_optimizer_enabled(
     logger = DummyLogger()
 
     monkeypatch.setattr(
-        "module.Data.ProjectService.LGDatabase.create",
+        "module.Data.Project.ProjectService.LGDatabase.create",
         lambda output_path, project_name: fake_db,
     )
-    monkeypatch.setattr("module.Data.ProjectService.LogManager.get", lambda: logger)
     monkeypatch.setattr(
-        "module.Data.ProjectService.Localizer.get", lambda: DummyLocalizer()
+        "module.Data.Project.ProjectService.LogManager.get", lambda: logger
+    )
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.Localizer.get", lambda: DummyLocalizer()
     )
 
     class FakeConfig:
@@ -375,7 +404,7 @@ def test_create_logs_mtool_prefilter_count_when_optimizer_enabled(
         mtool_optimizer_enable = True
 
     monkeypatch.setattr(
-        "module.Data.ProjectService.Config.load",
+        "module.Data.Project.ProjectService.Config.load",
         lambda self: FakeConfig(),
     )
 
@@ -388,11 +417,15 @@ def test_create_logs_mtool_prefilter_count_when_optimizer_enabled(
             del original_data
             return [Item.from_dict({"src": "s", "dst": "d", "row": 1})]
 
-    monkeypatch.setattr("module.Data.ProjectService.FileManager", FakeFileManager)
-    monkeypatch.setattr("module.Data.ProjectService.ZstdCodec.compress", lambda b: b)
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.FileManager", FakeFileManager
+    )
+    monkeypatch.setattr(
+        "module.Data.Project.ProjectService.ZstdTool.compress", lambda b: b
+    )
 
     monkeypatch.setattr(
-        "module.Data.ProjectService.ProjectPrefilter.apply",
+        "module.Data.Project.ProjectService.ProjectPrefilter.apply",
         lambda **kwargs: SimpleNamespace(
             stats=SimpleNamespace(rule_skipped=0, language_skipped=0, mtool_skipped=3),
             prefilter_config={"demo": True},

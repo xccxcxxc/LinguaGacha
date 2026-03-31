@@ -16,8 +16,8 @@ from model.Model import ThinkingLevel
 from module.Config import Config
 from module.Engine.Engine import Engine
 from module.Engine.TaskRequesterClientPool import TaskRequesterClientPool
-from module.Engine.TaskRequesterErrors import RequestCancelledError
-from module.Engine.TaskRequesterErrors import StreamDegradationError
+from module.Engine.TaskRequestErrors import RequestCancelledError
+from module.Engine.TaskRequestErrors import StreamDegradationError
 from module.Engine.TaskRequesterStream import StreamConsumer
 from module.Engine.TaskRequesterStream import StreamControl
 from module.Engine.TaskRequesterStream import StreamSession
@@ -40,9 +40,16 @@ class TaskRequester(Base):
     RE_GEMINI_2_5_FLASH: re.Pattern = re.compile(
         r"gemini-2\.5-flash", flags=re.IGNORECASE
     )
-    RE_GEMINI_3_PRO: re.Pattern = re.compile(r"gemini-3-pro", flags=re.IGNORECASE)
-    RE_GEMINI_3_FLASH: re.Pattern = re.compile(r"gemini-3-flash", flags=re.IGNORECASE)
-    RE_GEMINI_3_1_PRO: re.Pattern = re.compile(r"gemini-3\.1-pro", flags=re.IGNORECASE)
+    RE_Gemini_3_PRO: tuple[re.Pattern, ...] = (
+        re.compile(r"gemini-3-pro", flags=re.IGNORECASE),
+    )
+    RE_Gemini_3_1_PRO: tuple[re.Pattern, ...] = (
+        re.compile(r"gemini-3\.1-pro", flags=re.IGNORECASE),
+    )
+    RE_Gemini_3_FLASH_SERIES: tuple[re.Pattern, ...] = (
+        re.compile(r"gemini-3-flash", flags=re.IGNORECASE),
+        re.compile(r"gemini-3\.1-flash", flags=re.IGNORECASE),
+    )
 
     # Claude
     RE_CLAUDE: tuple[re.Pattern, ...] = (
@@ -88,7 +95,6 @@ class TaskRequester(Base):
     ANTHROPIC_AUTO_MAX_TOKENS_MIN: int = 8192
 
     def __init__(self, config: Config, model: dict) -> None:
-
         super().__init__()
         self.config = config
         self.model = model
@@ -152,7 +158,6 @@ class TaskRequester(Base):
         return max(self.ANTHROPIC_AUTO_MAX_TOKENS_MIN, self.input_token_threshold)
 
     def get_sdk_timeout_seconds(self) -> int:
-
         # 同步模式下无法像 asyncio 那样快速取消阻塞拉取，因此依赖 SDK 超时来兜底退出。
         hard_timeout_s = max(1, int(self.config.request_timeout))
         return hard_timeout_s + self.SDK_TIMEOUT_BUFFER_S
@@ -777,13 +782,28 @@ class TaskRequester(Base):
         self.apply_output_token_limit(config_args, "max_output_tokens")
 
         # Gemini
-        if __class__.RE_GEMINI_3_1_PRO.search(self.model_id) is not None:
-            if self.thinking_level == ThinkingLevel.OFF:
+        if any(v.search(self.model_id) is not None for v in __class__.RE_Gemini_3_PRO):
+            if (
+                self.thinking_level == ThinkingLevel.OFF
+                or self.thinking_level == ThinkingLevel.LOW
+                or self.thinking_level == ThinkingLevel.MEDIUM
+            ):
                 config_args["thinking_config"] = types.ThinkingConfig(
                     thinking_level=types.ThinkingLevel.LOW,
                     include_thoughts=True,
                 )
-            elif self.thinking_level == ThinkingLevel.LOW:
+            elif self.thinking_level == ThinkingLevel.HIGH:
+                config_args["thinking_config"] = types.ThinkingConfig(
+                    thinking_level=types.ThinkingLevel.HIGH,
+                    include_thoughts=True,
+                )
+        elif any(
+            v.search(self.model_id) is not None for v in __class__.RE_Gemini_3_1_PRO
+        ):
+            if (
+                self.thinking_level == ThinkingLevel.OFF
+                or self.thinking_level == ThinkingLevel.LOW
+            ):
                 config_args["thinking_config"] = types.ThinkingConfig(
                     thinking_level=types.ThinkingLevel.LOW,
                     include_thoughts=True,
@@ -798,28 +818,10 @@ class TaskRequester(Base):
                     thinking_level=types.ThinkingLevel.HIGH,
                     include_thoughts=True,
                 )
-        elif __class__.RE_GEMINI_3_PRO.search(self.model_id) is not None:
-            if self.thinking_level == ThinkingLevel.OFF:
-                config_args["thinking_config"] = types.ThinkingConfig(
-                    thinking_level=types.ThinkingLevel.LOW,
-                    include_thoughts=True,
-                )
-            elif self.thinking_level == ThinkingLevel.LOW:
-                config_args["thinking_config"] = types.ThinkingConfig(
-                    thinking_level=types.ThinkingLevel.LOW,
-                    include_thoughts=True,
-                )
-            elif self.thinking_level == ThinkingLevel.MEDIUM:
-                config_args["thinking_config"] = types.ThinkingConfig(
-                    thinking_level=types.ThinkingLevel.LOW,
-                    include_thoughts=True,
-                )
-            elif self.thinking_level == ThinkingLevel.HIGH:
-                config_args["thinking_config"] = types.ThinkingConfig(
-                    thinking_level=types.ThinkingLevel.HIGH,
-                    include_thoughts=True,
-                )
-        elif __class__.RE_GEMINI_3_FLASH.search(self.model_id) is not None:
+        elif any(
+            v.search(self.model_id) is not None
+            for v in __class__.RE_Gemini_3_FLASH_SERIES
+        ):
             if self.thinking_level == ThinkingLevel.OFF:
                 config_args["thinking_config"] = types.ThinkingConfig(
                     thinking_level=types.ThinkingLevel.MINIMAL,

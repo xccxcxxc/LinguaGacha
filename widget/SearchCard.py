@@ -178,6 +178,10 @@ class SearchCard(CardWidget):
         self.line_edit.setPlaceholderText(Localizer.get().placeholder)
         self.line_edit.setClearButtonEnabled(True)
         self.line_edit.textChanged.connect(self.update_replace_action_state)
+        self.install_shortcut_tooltip(
+            self.get_search_line_button(),
+            Localizer.get().shortcut_enter,
+        )
         self.root.addWidget(self.line_edit)
 
         # 4. 导航按钮
@@ -246,6 +250,10 @@ class SearchCard(CardWidget):
             self,
         )
         self.replace_btn.setIcon(ICON_REPLACE)
+        self.install_shortcut_tooltip(
+            self.replace_btn,
+            Localizer.get().shortcut_ctrl_h,
+        )
 
         self.replace_all_btn = TransparentPushButton(
             Localizer.get().proofreading_page_replace_all_btn,
@@ -272,6 +280,22 @@ class SearchCard(CardWidget):
         # 除信息文本外，其余控件都贴左布局；仅把信息文本推到最右侧。
         self.root.addStretch(1)
         self.root.addWidget(self.match_label)
+
+    def install_shortcut_tooltip(self, widget: QWidget | None, shortcut: str) -> None:
+        """统一给搜索栏内部按钮安装 qfluent 风格快捷键提示。"""
+        if widget is None:
+            return
+        widget.setToolTip(shortcut)
+        widget.installEventFilter(ToolTipFilter(widget, 300, ToolTipPosition.TOP))
+
+    def get_search_line_button(self) -> QWidget | None:
+        """兼容 SearchLineEdit 不同版本的 searchButton 访问方式。"""
+        search_button = getattr(self.line_edit, "searchButton", None)
+        if callable(search_button):
+            search_button = search_button()
+        if isinstance(search_button, QWidget):
+            return search_button
+        return None
 
     def add_right_widget(self, widget: QWidget) -> None:
         self.right_layout.addWidget(widget)
@@ -338,6 +362,38 @@ class SearchCard(CardWidget):
 
     def is_replace_mode(self) -> bool:
         return self.replace_mode
+
+    def set_search_state(
+        self,
+        *,
+        keyword: str,
+        is_regex: bool,
+        replace_mode: bool | None = None,
+        emit_options_changed: bool = True,
+    ) -> None:
+        """以编程方式同步搜索栏状态，避免外部直接操作内部控件细节。"""
+
+        normalized_keyword = keyword.strip()
+        self.line_edit.setText(normalized_keyword)
+
+        options_changed = False
+        new_regex_mode = bool(is_regex)
+        if self.regex_mode != new_regex_mode:
+            self.regex_mode = new_regex_mode
+            options_changed = True
+        self.regex_btn.setChecked(self.regex_mode)
+        self.update_regex_tooltip()
+
+        if replace_mode is not None:
+            new_replace_mode = bool(replace_mode)
+            if self.replace_mode != new_replace_mode:
+                self.replace_mode = new_replace_mode
+                options_changed = True
+            self.update_replace_mode_ui()
+
+        self.update_replace_action_state()
+        if options_changed and emit_options_changed:
+            self.search_options_changed.emit()
 
     def update_replace_mode_ui(self) -> None:
         replace_visible = self.replace_mode
@@ -460,8 +516,6 @@ class SearchCard(CardWidget):
                 columns=self.bound_view_columns,
                 regex_mode=self.regex_mode,
             )
-
-        return
 
     def apply_table_search(self) -> None:
         """根据当前 keyword/regex 状态应用搜索（用于选项切换/回车触发）。"""
@@ -635,28 +689,48 @@ class SearchCard(CardWidget):
         except re.error as e:
             return False, str(e)
 
+    def build_self_callback(
+        self, callback: Callable[["SearchCard"], None]
+    ) -> Callable[..., None]:
+        """统一包装 Qt 信号回调，忽略额外参数并透传当前卡片实例。"""
+
+        def wrapped(*args: object) -> None:
+            del args
+            callback(self)
+
+        return wrapped
+
+    @staticmethod
+    def build_emit_callback(callback: Callable[[], None]) -> Callable[..., None]:
+        """统一吞掉 Qt 信号的附带参数，避免重复写等价 lambda。"""
+
+        def wrapped(*args: object) -> None:
+            del args
+            callback()
+
+        return wrapped
+
     def on_prev_clicked(self, clicked: Callable) -> None:
         """注册上一个按钮点击回调，传递 self 以便外部获取上下文"""
-        self.prev_btn.clicked.connect(lambda: clicked(self))
+        self.prev_btn.clicked.connect(self.build_self_callback(clicked))
 
     def on_next_clicked(self, clicked: Callable) -> None:
         """注册下一个按钮点击回调，传递 self 以便外部获取上下文"""
-        self.next_btn.clicked.connect(lambda: clicked(self))
+        self.next_btn.clicked.connect(self.build_self_callback(clicked))
 
     def on_back_clicked(self, clicked: Callable) -> None:
         """注册返回按钮点击回调，传递 self 以便外部获取上下文"""
-        self.back.clicked.connect(lambda: clicked(self))
+        self.back.clicked.connect(self.build_self_callback(clicked))
 
     def on_search_triggered(self, triggered: Callable) -> None:
         """注册搜索触发回调（回车或点击搜索图标）"""
-        # searchSignal 在点击搜索按钮时触发，某些版本回车键也会触发此信号
-        self.line_edit.searchSignal.connect(
-            lambda text: self.emit_search_triggered(triggered)
-        )
-        # 显式连接 returnPressed 信号，确保回车键始终能响应搜索
-        self.line_edit.returnPressed.connect(
+        handler = self.build_emit_callback(
             lambda: self.emit_search_triggered(triggered)
         )
+        # searchSignal 在点击搜索按钮时触发，某些版本回车键也会触发此信号
+        self.line_edit.searchSignal.connect(handler)
+        # 显式连接 returnPressed 信号，确保回车键始终能响应搜索
+        self.line_edit.returnPressed.connect(handler)
 
     def emit_search_triggered(self, triggered: Callable) -> None:
         keyword = self.get_keyword()
@@ -676,16 +750,18 @@ class SearchCard(CardWidget):
 
     def on_search_options_changed(self, changed: Callable) -> None:
         """注册搜索选项切换回调。"""
-        self.search_options_changed.connect(lambda: changed(self))
+        self.search_options_changed.connect(self.build_self_callback(changed))
 
     def on_replace_clicked(self, clicked: Callable) -> None:
         """注册单步替换点击回调。"""
-        self.replace_btn.clicked.connect(lambda: self.emit_replace_triggered(clicked))
+        self.replace_btn.clicked.connect(
+            self.build_emit_callback(lambda: self.emit_replace_triggered(clicked))
+        )
 
     def on_replace_all_clicked(self, clicked: Callable) -> None:
         """注册全部替换点击回调。"""
         self.replace_all_btn.clicked.connect(
-            lambda: self.emit_replace_all_triggered(clicked)
+            self.build_emit_callback(lambda: self.emit_replace_all_triggered(clicked))
         )
 
     def emit_replace_triggered(self, clicked: Callable) -> None:

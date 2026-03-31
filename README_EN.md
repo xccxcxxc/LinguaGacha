@@ -34,7 +34,6 @@
 
 ## System Requirements 🖥️
 - Compatible with AI model interfaces following `OpenAI`, `Google`, `Anthropic`, `SakuraLLM` standards
-- Compatible with [KeywordGacha](https://github.com/neavo/KeywordGacha)　`👈👈 Next-generation tool for AI-powered glossary generation`
 
 ## Basic Workflow 🛸
 - Download application from [Releases page](https://github.com/neavo/LinguaGacha/releases)
@@ -64,7 +63,7 @@
 - Feature Description
   - [CLI Mode](https://github.com/neavo/LinguaGacha/wiki/CLIModeEN)
   - [Glossary](https://github.com/neavo/LinguaGacha/wiki/GlossaryEN)　　[Text Preserve](https://github.com/neavo/LinguaGacha/wiki/TextPreserveEN)　　[Text Replacement](https://github.com/neavo/LinguaGacha/wiki/ReplacementEN)
-  - [Incremental Translation](https://github.com/neavo/LinguaGacha/wiki/IncrementalTranslationEN)　　[MTool Optimizer](https://github.com/neavo/LinguaGacha/wiki/MToolOptimizerEN)
+  - [Force Thinking](https://github.com/neavo/LinguaGacha/wiki/ForceThinkingEN)　　[MTool Optimizer](https://github.com/neavo/LinguaGacha/wiki/MToolOptimizerEN)
   - [TS Conversion](https://github.com/neavo/LinguaGacha/wiki/TSConversionEN) [Name-Field Extraction](https://github.com/neavo/LinguaGacha/wiki/NameFieldExtractionEN)
   - You can find more details on each feature in the [Wiki](https://github.com/neavo/LinguaGacha/wiki), and you are welcome to share your experience in the [Discussions](https://github.com/neavo/LinguaGacha/discussions)
 
@@ -83,13 +82,14 @@
 - See [Wiki - Supported Formats](https://github.com/neavo/LinguaGacha/wiki/%E6%94%AF%E6%8C%81%E7%9A%84%E6%96%87%E4%BB%B6%E6%A0%BC%E5%BC%8F) for examples. Submit format requests via [ISSUES](https://github.com/neavo/LinguaGacha/issues)
 
 ## Recent Updates 📅
-- 20260304 v0.59.1
-  - Optimizations and Improvements #461
+- 20260320 v0.60.1
+  - Optimizations and Improvements #465 #476 #477 #481
 
-- 20260303 v0.59.0
-  - feat - Quality Rule Effectiveness Statistics
-    - `Glossary` `Text Replacement` `Text Protection`
-  - Optimizations and Improvements #453 #457
+- 20260317 v0.60.0
+  - feat - Added `Analysis Task (Glossary Extraction)`
+    - Removed `Auto-complete Glossary`
+  - perf - Support text reverse lookup for quality rules
+  - perf - Support thinking level settings for Gemini-3.1-Flash
 
 ### Development Guide 🛠️
 - This project is managed using [**uv**](https://github.com/astral-sh/uv)

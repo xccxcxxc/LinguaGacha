@@ -39,11 +39,12 @@ def test_status_and_request_counters() -> None:
     assert engine.get_request_in_flight_count() == 0
 
 
-def test_get_running_task_count_uses_translator_and_single_threads(
+def test_get_running_task_count_uses_translation_and_single_threads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine = Engine()
-    engine.translator = SimpleNamespace(get_concurrency_in_use=lambda: 3)
+    engine.translation = SimpleNamespace(get_concurrency_in_use=lambda: 3)
+    engine.analysis = SimpleNamespace(get_concurrency_in_use=lambda: 2)
 
     fake_threads = [
         SimpleNamespace(name="ENGINE_SINGLE"),
@@ -54,23 +55,23 @@ def test_get_running_task_count_uses_translator_and_single_threads(
         "module.Engine.Engine.threading.enumerate", lambda: fake_threads
     )
 
-    assert engine.get_running_task_count() == 5
+    assert engine.get_running_task_count() == 7
 
 
-def test_translate_single_item_delegates_to_translator_task(
+def test_translate_single_item_delegates_to_translation_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[Item, Config, object]] = []
 
-    class FakeTranslatorTask:
+    class FakeTranslationTask:
         @staticmethod
         def translate_single(item: Item, config: Config, callback: object) -> None:
             calls.append((item, config, callback))
 
     monkeypatch.setitem(
         __import__("sys").modules,
-        "module.Engine.Translator.TranslatorTask",
-        SimpleNamespace(TranslatorTask=FakeTranslatorTask),
+        "module.Engine.Translation.TranslationTask",
+        SimpleNamespace(TranslationTask=FakeTranslationTask),
     )
 
     engine = Engine()
@@ -87,34 +88,43 @@ def test_translate_single_item_delegates_to_translator_task(
     assert calls[0][1] is config
 
 
-def test_run_initializes_api_tester_and_translator(
+def test_run_initializes_api_test_analysis_and_translation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeAPITester:
+    class FakeAPITest:
         pass
 
-    class FakeTranslator:
+    class FakeAnalysis:
+        pass
+
+    class FakeTranslation:
         pass
 
     monkeypatch.setitem(
         sys.modules,
-        "module.Engine.APITester.APITester",
-        SimpleNamespace(APITester=FakeAPITester),
+        "module.Engine.APITest.APITest",
+        SimpleNamespace(APITest=FakeAPITest),
     )
     monkeypatch.setitem(
         sys.modules,
-        "module.Engine.Translator.Translator",
-        SimpleNamespace(Translator=FakeTranslator),
+        "module.Engine.Analysis.Analysis",
+        SimpleNamespace(Analysis=FakeAnalysis),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "module.Engine.Translation.Translation",
+        SimpleNamespace(Translation=FakeTranslation),
     )
 
     engine = Engine()
     engine.run()
 
-    assert isinstance(engine.api_test, FakeAPITester)
-    assert isinstance(engine.translator, FakeTranslator)
+    assert isinstance(engine.api_test, FakeAPITest)
+    assert isinstance(engine.analysis, FakeAnalysis)
+    assert isinstance(engine.translation, FakeTranslation)
 
 
-def test_get_running_task_count_without_translator_uses_single_threads(
+def test_get_running_task_count_without_translation_uses_single_threads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine = Engine()

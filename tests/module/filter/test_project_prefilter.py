@@ -1,11 +1,8 @@
-from unittest.mock import MagicMock
-
 from base.Base import Base
 from base.BaseLanguage import BaseLanguage
 from model.Item import Item
 from module.Filter.ProjectPrefilter import (
     ProjectPrefilter,
-    ProjectPrefilterResult,
 )
 
 
@@ -142,7 +139,6 @@ class TestProjectPrefilterStats:
             target_language=BaseLanguage.Enum.EN,
             mtool_optimizer_enable=False,
         )
-        assert isinstance(result, ProjectPrefilterResult)
         assert result.stats.rule_skipped == 2
         assert result.stats.language_skipped == 1
         assert result.stats.mtool_skipped == 0
@@ -162,32 +158,59 @@ class TestProjectPrefilterStats:
 class TestProjectPrefilterProgressCallback:
     """进度回调行为。"""
 
-    def test_progress_callback_is_called(self) -> None:
+    def test_progress_callback_reports_progress_until_final_step(self) -> None:
         items = [make_item(src="Hello") for _ in range(5)]
-        cb = MagicMock()
+        progress_steps: list[tuple[int, int]] = []
         ProjectPrefilter.apply(
             items,
             source_language=BaseLanguage.Enum.EN,
             target_language=BaseLanguage.Enum.ZH,
             mtool_optimizer_enable=False,
-            progress_cb=cb,
+            progress_cb=lambda current, total: progress_steps.append((current, total)),
         )
-        assert cb.call_count > 0
-        # 最后一次调用的 current 应等于 total
-        last_call = cb.call_args_list[-1]
-        current, total = last_call.args
-        assert current == total
+        assert progress_steps[0] == (0, 10)
+        assert progress_steps[-1] == (10, 10)
 
-    def test_no_error_without_callback(self) -> None:
-        items = [make_item(src="Hello")]
-        # 不传 progress_cb 不应报错
-        result = ProjectPrefilter.apply(
+    def test_progress_every_limits_intermediate_reports(self) -> None:
+        items = [make_item(src="Hello") for _ in range(3)]
+        progress_steps: list[tuple[int, int]] = []
+
+        ProjectPrefilter.apply(
             items,
             source_language=BaseLanguage.Enum.EN,
             target_language=BaseLanguage.Enum.ZH,
             mtool_optimizer_enable=False,
+            progress_cb=lambda current, total: progress_steps.append((current, total)),
+            progress_every=4,
         )
-        assert isinstance(result, ProjectPrefilterResult)
+
+        assert progress_steps[0] == (0, 6)
+        assert (4, 6) in progress_steps
+        assert progress_steps[-1] == (6, 6)
+        assert (2, 6) not in progress_steps
+        assert (3, 6) not in progress_steps
+        assert (5, 6) not in progress_steps
+
+
+class TestProjectPrefilterInputContract:
+    """对外输入契约：允许直接传语言码字符串。"""
+
+    def test_apply_accepts_plain_string_language_code(self) -> None:
+        items = [make_item(src="你好世界"), make_item(src="Hello World")]
+        result = ProjectPrefilter.apply(
+            items,
+            source_language="ZH",
+            target_language="EN",
+            mtool_optimizer_enable=False,
+        )
+
+        assert items[0].get_status() == Base.ProjectStatus.NONE
+        assert items[1].get_status() == Base.ProjectStatus.LANGUAGE_SKIPPED
+        assert result.prefilter_config == {
+            "source_language": "ZH",
+            "target_language": "EN",
+            "mtool_optimizer_enable": False,
+        }
 
 
 class TestMToolOptimizerPreprocess:
@@ -341,35 +364,35 @@ class TestProjectPrefilterCoverageBranches:
     """补齐回调与空输入分支，确保预过滤流程覆盖完整。"""
 
     def test_apply_with_empty_items_and_callback_reports_nothing(self) -> None:
-        cb = MagicMock()
+        progress_steps: list[tuple[int, int]] = []
 
         result = ProjectPrefilter.apply(
             [],
             source_language=BaseLanguage.Enum.EN,
             target_language=BaseLanguage.Enum.ZH,
             mtool_optimizer_enable=False,
-            progress_cb=cb,
+            progress_cb=lambda current, total: progress_steps.append((current, total)),
         )
 
         assert result.stats.rule_skipped == 0
         assert result.stats.language_skipped == 0
-        assert cb.call_count == 0
+        assert progress_steps == []
 
     def test_mtool_preprocess_empty_list_reports_offset_progress(self) -> None:
-        cb = MagicMock()
+        progress_steps: list[tuple[int, int]] = []
 
         skipped = ProjectPrefilter.mtool_optimizer_preprocess(
             [],
-            progress_cb=cb,
+            progress_cb=lambda current, total: progress_steps.append((current, total)),
             progress_offset=3,
             progress_total=10,
         )
 
         assert skipped == 0
-        cb.assert_called_once_with(3, 10)
+        assert progress_steps == [(3, 10)]
 
     def test_mtool_preprocess_progress_callback_reports_final_step(self) -> None:
-        cb = MagicMock()
+        progress_steps: list[tuple[int, int]] = []
         multi_line = make_item(
             src="Line A\nLine B",
             file_type=Item.FileType.KVJSON,
@@ -383,13 +406,11 @@ class TestProjectPrefilterCoverageBranches:
 
         skipped = ProjectPrefilter.mtool_optimizer_preprocess(
             [multi_line, clause],
-            progress_cb=cb,
+            progress_cb=lambda current, total: progress_steps.append((current, total)),
             progress_offset=6,
             progress_total=18,
             progress_every=100,
         )
 
         assert skipped == 1
-        assert cb.call_count >= 1
-        last_call = cb.call_args_list[-1]
-        assert last_call.args == (18, 18)
+        assert progress_steps[-1] == (18, 18)

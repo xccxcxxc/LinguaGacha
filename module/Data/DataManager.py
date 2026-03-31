@@ -1,86 +1,70 @@
-import os
+from __future__ import annotations
+
 import threading
-from collections import defaultdict
+from collections.abc import Callable
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
-from datetime import datetime
-from enum import StrEnum
-from pathlib import Path
 from typing import Any
 from typing import ClassVar
+from typing import TYPE_CHECKING
 
 from base.Base import Base
 from base.LogManager import LogManager
 from model.Item import Item
 from module.Config import Config
-from module.Data.AssetService import AssetService
-from module.Data.BatchService import BatchService
-from module.Data.ExportPathService import ExportPathService
-from module.Data.ItemService import ItemService
-from module.Data.LGDatabase import LGDatabase
-from module.Data.MetaService import MetaService
-from module.Data.ProjectSession import ProjectSession
-from module.Data.RuleService import RuleService
-from module.Data.Type import RULE_META_KEYS
-from module.Data.ZstdCodec import ZstdCodec
-from module.Filter.ProjectPrefilter import ProjectPrefilter
+from module.Data.Analysis.AnalysisService import AnalysisService
+from module.Data.Core.AssetService import AssetService
+from module.Data.Core.BatchService import BatchService
+from module.Data.Core.DataEnums import TextPreserveMode as DataTextPreserveMode
+from module.Data.Core.ItemService import ItemService
+from module.Data.Core.MetaService import MetaService
+from module.Data.Core.ProjectSession import ProjectSession
+from module.Data.Core.RuleService import RuleService
+from module.Data.Project.ExportPathService import ExportPathService
+from module.Data.Project.ProjectFileService import ProjectFileService
+from module.Data.Project.ProjectLifecycleService import ProjectLifecycleService
+from module.Data.Project.ProjectPrefilterService import ProjectPrefilterService
+from module.Data.Project.WorkbenchService import WorkbenchService
+from module.Data.Storage.LGDatabase import LGDatabase
+from module.Data.Quality.QualityRuleService import QualityRuleService
+from module.Data.Translation.TranslationResetService import TranslationResetService
 from module.Filter.ProjectPrefilter import ProjectPrefilterResult
+from module.Engine.Analysis.AnalysisFakeNameInjector import AnalysisFakeNameInjector
 from module.Localizer.Localizer import Localizer
-from module.QualityRule.QualityRuleMerger import QualityRuleMerger
-from module.Utils.GapTool import GapTool
 
-
-@dataclass(frozen=True)
-class ProjectPrefilterRequest:
-    """预过滤请求快照（跨线程传递）。"""
-
-    token: int
-    seq: int
-    lg_path: str
-    reason: str
-    source_language: str
-    target_language: str
-    mtool_optimizer_enable: bool
-
-
-@dataclass(frozen=True)
-class WorkbenchFileEntrySnapshot:
-    """工作台文件表的单行快照（跨线程传递）。"""
-
-    rel_path: str
-    item_count: int
-    file_type: Item.FileType
-
-
-@dataclass(frozen=True)
-class WorkbenchSnapshot:
-    """工作台文件列表与统计信息快照（跨线程传递）。"""
-
-    file_count: int
-    total_items: int
-    translated: int
-    untranslated: int
-    entries: tuple[WorkbenchFileEntrySnapshot, ...]
+if TYPE_CHECKING:
+    from module.Data.Core.DataTypes import AnalysisGlossaryImportPreview
+    from module.Data.Core.DataTypes import ProjectFileMutationResult
+    from module.Data.Core.DataTypes import ProjectPrefilterRequest
+    from module.Data.Core.DataTypes import WorkbenchSnapshot
 
 
 class DataManager(Base):
-    """全局数据中间件（单入口）。
-
-    设计目标：
-    - 对外只暴露 DataManager.get().get_xxx()/set_xxx() 形式的 API
-    - 对内将具体实现下沉到独立 Service，DataManager 仅做委派与事件出口
-    """
+    """全局数据中间件。"""
 
     instance: ClassVar["DataManager | None"] = None
     lock: ClassVar[threading.Lock] = threading.Lock()
 
-    # 对外提供统一的规则枚举入口，避免业务侧直接依赖数据库实现
     RuleType = LGDatabase.RuleType
-
-    class TextPreserveMode(StrEnum):
-        OFF = "off"  # 完全关闭：不使用内置或自定义规则
-        SMART = "smart"  # 智能：使用内置预置规则
-        CUSTOM = "custom"  # 自定义：使用项目内自定义规则
+    LEGACY_TRANSLATION_PROMPT_ZH_RULE_TYPE: ClassVar[str] = (
+        LGDatabase.LEGACY_TRANSLATION_PROMPT_ZH_RULE_TYPE
+    )
+    LEGACY_TRANSLATION_PROMPT_EN_RULE_TYPE: ClassVar[str] = (
+        LGDatabase.LEGACY_TRANSLATION_PROMPT_EN_RULE_TYPE
+    )
+    LEGACY_TRANSLATION_PROMPT_MIGRATED_META_KEY: ClassVar[str] = (
+        "translation_prompt_legacy_migrated"
+    )
+    RULE_META_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "glossary_enable",
+            "text_preserve_mode",
+            "pre_translation_replacement_enable",
+            "post_translation_replacement_enable",
+            "translation_prompt_enable",
+            "analysis_prompt_enable",
+        }
+    )
+    TextPreserveMode = DataTextPreserveMode
 
     def __init__(self) -> None:
         super().__init__()
@@ -93,42 +77,64 @@ class DataManager(Base):
         self.item_service = ItemService(self.session)
         self.asset_service = AssetService(self.session)
         self.batch_service = BatchService(self.session)
-        # 避免与 FileManager/文件解析模块形成循环依赖：这里使用延迟导入。
-        from module.Data.ProjectService import ProjectService
-        from module.Data.TranslationItemService import TranslationItemService
+        from module.Data.Project.ProjectService import ProjectService
+        from module.Data.Translation.TranslationItemService import (
+            TranslationItemService,
+        )
 
         self.translation_item_service = TranslationItemService(self.session)
         self.project_service = ProjectService()
         self.export_path_service = ExportPathService()
 
-        # 监听翻译活动以失效 items 缓存，避免读到中间态
+        self.lifecycle_service = ProjectLifecycleService(
+            self.session,
+            self.meta_service,
+            self.item_service,
+            self.asset_service,
+            __class__.RuleType,
+            __class__.LEGACY_TRANSLATION_PROMPT_ZH_RULE_TYPE,
+            __class__.LEGACY_TRANSLATION_PROMPT_EN_RULE_TYPE,
+            __class__.LEGACY_TRANSLATION_PROMPT_MIGRATED_META_KEY,
+        )
+        self.prefilter_service = ProjectPrefilterService(
+            self.session,
+            self.item_service,
+            self.batch_service,
+        )
+        self.workbench_service = WorkbenchService()
+        self.quality_rule_service = QualityRuleService(
+            self.session,
+            self.rule_service,
+            self.meta_service,
+            self.item_service,
+        )
+        self.analysis_service = AnalysisService(
+            self.session,
+            self.batch_service,
+            self.meta_service,
+            self.item_service,
+            self.quality_rule_service,
+        )
+        self.translation_reset_service = TranslationResetService(
+            self.session,
+            self.batch_service,
+            self.meta_service,
+            self.item_service,
+        )
+        self.project_file_service = ProjectFileService(
+            self.session,
+            self.item_service,
+            self.analysis_service,
+            self.project_service.SUPPORTED_EXTENSIONS,
+        )
+
         self.subscribe(Base.Event.TRANSLATION_TASK, self.on_translation_activity)
         self.subscribe(Base.Event.TRANSLATION_RESET_ALL, self.on_translation_activity)
         self.subscribe(
             Base.Event.TRANSLATION_RESET_FAILED,
             self.on_translation_activity,
         )
-
-        # 配置变更触发预过滤重算（确保校对/翻译读取同一份稳定状态）
         self.subscribe(Base.Event.CONFIG_UPDATED, self.on_config_updated)
-        self.subscribe(Base.Event.PROJECT_LOADED, self.on_project_loaded)
-
-        # 预过滤是工程级写库操作：统一串行化并做合并，避免竞态与重复工作。
-        self.prefilter_lock = threading.Lock()
-        self.prefilter_cond = threading.Condition(self.prefilter_lock)
-        self.prefilter_running: bool = False
-        self.prefilter_pending: bool = False
-
-        # token：标记一次 worker 生命周期（用于事件关联/合并）；seq：标记请求顺序（用于等待/测试可观测性）。
-        self.prefilter_token: int = 0
-        self.prefilter_active_token: int = 0
-        self.prefilter_request_seq: int = 0
-        self.prefilter_last_handled_seq: int = 0
-        self.prefilter_latest_request: ProjectPrefilterRequest | None = None
-
-        # 工程级文件操作（增删改）统一串行化，避免 SQLite 多线程写冲突。
-        self.file_op_lock = threading.Lock()
-        self.file_op_running: bool = False
 
     @classmethod
     def get(cls) -> "DataManager":
@@ -138,72 +144,33 @@ class DataManager(Base):
                     cls.instance = cls()
         return cls.instance
 
-    # ===================== 生命周期 =====================
-
     def load_project(self, lg_path: str) -> None:
-        """加载工程并初始化缓存（meta 立即可用）。"""
-        with self.state_lock:
-            if self.is_loaded():
-                self.unload_project()
+        """加载工程并发出工程已加载事件。"""
 
-            if not Path(lg_path).exists():
-                raise FileNotFoundError(f"工程文件不存在: {lg_path}")
-
-            self.session.lg_path = lg_path
-            self.session.db = LGDatabase(lg_path)
-
-            # 更新最后访问时间（短连接写入即可）
-            self.session.db.set_meta("updated_at", datetime.now().isoformat())
-
-            # 载入 meta 强缓存
-            self.meta_service.refresh_cache_from_db()
-
-            # 兼容旧工程：早期使用 text_preserve_enable(bool) 表示是否启用自定义文本保护；
-            # 新语义改为 text_preserve_mode(off/smart/custom)。这里只在工程加载时做一次迁移写回。
-            raw_mode = self.session.meta_cache.get("text_preserve_mode")
-            mode_valid = False
-            if isinstance(raw_mode, str):
-                try:
-                    __class__.TextPreserveMode(raw_mode)
-                    mode_valid = True
-                except ValueError:
-                    mode_valid = False
-
-            if not mode_valid:
-                legacy_enable = bool(
-                    self.session.meta_cache.get("text_preserve_enable", False)
-                )
-                migrated = (
-                    __class__.TextPreserveMode.CUSTOM.value
-                    if legacy_enable
-                    else __class__.TextPreserveMode.SMART.value
-                )
-                self.session.db.set_meta("text_preserve_mode", migrated)
-                self.session.meta_cache["text_preserve_mode"] = migrated
-
-            # 清理其它缓存（避免跨工程串数据）
-            self.session.rule_cache.clear()
-            self.session.rule_text_cache.clear()
-            self.item_service.clear_item_cache()
-            self.asset_service.clear_decompress_cache()
-
+        if self.is_loaded():
+            self.unload_project()
+        self.lifecycle_service.load_project(lg_path)
+        self.handle_project_loaded_post_actions()
         self.emit(Base.Event.PROJECT_LOADED, {"path": lg_path})
 
     def unload_project(self) -> None:
-        """卸载工程并清理缓存。"""
-        old_path: str | None = None
-        with self.state_lock:
-            old_path = self.session.lg_path
+        """卸载工程并发出工程已卸载事件。"""
 
-            if self.session.db is not None:
-                self.session.db.close()
-
-            self.session.db = None
-            self.session.lg_path = None
-            self.session.clear_all_caches()
-
+        old_path = self.lifecycle_service.unload_project()
         if old_path:
             self.emit(Base.Event.PROJECT_UNLOADED, {"path": old_path})
+
+    def migrate_legacy_translation_prompt_text_once(self) -> None:
+        self.lifecycle_service.migrate_legacy_translation_prompt_text_once()
+
+    def get_preferred_legacy_translation_prompt_types(self) -> tuple[str, str]:
+        return self.lifecycle_service.get_preferred_legacy_translation_prompt_types()
+
+    def get_first_available_legacy_translation_prompt(self, db: LGDatabase) -> str:
+        return self.lifecycle_service.get_first_available_legacy_translation_prompt(db)
+
+    def mark_legacy_translation_prompt_migrated(self, db: LGDatabase) -> None:
+        self.lifecycle_service.mark_legacy_translation_prompt_migrated(db)
 
     def is_loaded(self) -> bool:
         with self.state_lock:
@@ -214,219 +181,144 @@ class DataManager(Base):
             return self.session.lg_path
 
     def open_db(self) -> None:
-        """打开长连接（翻译期间用，提升高频写入性能）。"""
+        """打开长连接。"""
+
         with self.state_lock:
             db = self.session.db
-            if db is None:
-                return
-            db.open()
+            if db is not None:
+                db.open()
 
     def close_db(self) -> None:
-        """关闭长连接（触发 WAL checkpoint 清理）。"""
+        """关闭长连接。"""
+
         with self.state_lock:
             db = self.session.db
-            if db is None:
-                return
-            db.close()
+            if db is not None:
+                db.close()
 
     def on_translation_activity(self, event: Base.Event, data: dict) -> None:
-        # 翻译过程中 items 会频繁写入 DB；items 缓存不追实时，统一失效更安全。
+        """翻译活动结束后刷新工作台。"""
+
         self.item_service.clear_item_cache()
 
-        # 翻译运行/重置会改变条目状态：工作台需要在终态触发一次聚合刷新。
-        # 这里发 WORKBENCH_REFRESH，而不是 PROJECT_FILE_UPDATE，避免语义混叠。
         should_emit_refresh = False
         if event == Base.Event.TRANSLATION_TASK:
-            sub_event = data.get("sub_event")
-            should_emit_refresh = sub_event == Base.SubEvent.DONE
+            should_emit_refresh = data.get("sub_event") == Base.SubEvent.DONE
         elif event in (
             Base.Event.TRANSLATION_RESET_ALL,
             Base.Event.TRANSLATION_RESET_FAILED,
         ):
-            sub_event: Base.SubEvent = data["sub_event"]
+            sub_event = data["sub_event"]
             should_emit_refresh = sub_event in (
                 Base.SubEvent.DONE,
                 Base.SubEvent.ERROR,
             )
 
-        if not should_emit_refresh:
-            return
-        if not self.is_loaded():
-            return
-        self.emit(Base.Event.WORKBENCH_REFRESH, {"reason": event.value})
+        if should_emit_refresh and self.is_loaded():
+            self.emit(Base.Event.WORKBENCH_REFRESH, {"reason": event.value})
 
-    def on_project_loaded(self, event: Base.Event, data: dict) -> None:
-        del event
-        del data
-
-        # 旧工程可能没有预过滤元信息；为避免移除翻译期过滤后出现跳过集合不一致，
-        # 在工程加载后按当前配置补一次（若已一致则跳过）。
-        config = Config().load()
-        if not self.is_prefilter_needed(config):
+    def handle_project_loaded_post_actions(self) -> None:
+        """在工程真正对外可见前完成加载后补处理。"""
+        if self.schedule_prefilter_if_needed(reason="project_loaded"):
             return
-        self.schedule_project_prefilter(config, reason="project_loaded")
+        self.refresh_analysis_progress_snapshot_cache()
 
     def on_config_updated(self, event: Base.Event, data: dict) -> None:
+        """关键配置变化后补跑预过滤。"""
+
         del event
+
         keys = data.get("keys", [])
         if not isinstance(keys, list):
             keys = []
         relevant = {"source_language", "target_language", "mtool_optimizer_enable"}
-        if not any(isinstance(k, str) and k in relevant for k in keys):
+        if not any(isinstance(key, str) and key in relevant for key in keys):
             return
         if not self.is_loaded():
             return
+
+        self.schedule_prefilter_if_needed(reason="config_updated")
+
+    def schedule_prefilter_if_needed(self, *, reason: str) -> bool:
+        """按当前配置判断是否需要补跑预过滤。"""
 
         config = Config().load()
-        if not self.is_prefilter_needed(config):
-            return
-        self.schedule_project_prefilter(config, reason="config_updated")
+        if self.is_prefilter_needed(config):
+            self.schedule_project_prefilter(config, reason=reason)
+            return True
+        return False
 
     def is_prefilter_needed(self, config: Config) -> bool:
-        raw = self.get_meta("prefilter_config", {})
-        if not isinstance(raw, dict):
-            return True
-        expected = {
-            "source_language": str(config.source_language),
-            "target_language": str(config.target_language),
-            "mtool_optimizer_enable": bool(config.mtool_optimizer_enable),
-        }
-        return raw != expected
+        """判断当前工程是否需要重跑预过滤。"""
+
+        return self.prefilter_service.is_prefilter_needed(
+            self.get_meta("prefilter_config", {}),
+            config,
+        )
 
     def schedule_project_prefilter(self, config: Config, *, reason: str) -> None:
-        """后台触发预过滤（自动合并短时间内的多次请求）。"""
+        """后台触发预过滤。"""
 
-        # 翻译过程中 UI 会禁用相关开关，但这里仍做一次兜底。
         from module.Engine.Engine import Engine
 
-        if not self.is_loaded():
+        lg_path = self.get_lg_path()
+        if not lg_path or not self.is_loaded():
             return
         if Engine.get().get_status() != Base.TaskStatus.IDLE:
             return
 
-        source_language = str(config.source_language)
-        target_language = str(config.target_language)
-        mtool_optimizer_enable = bool(config.mtool_optimizer_enable)
-
-        start_worker = False
-        with self.prefilter_cond:
-            if self.prefilter_running:
-                token = self.prefilter_active_token
-            else:
-                self.prefilter_token += 1
-                token = self.prefilter_token
-                self.prefilter_active_token = token
-                self.prefilter_running = True
-                start_worker = True
-
-            self.prefilter_request_seq += 1
-            seq = self.prefilter_request_seq
-            lg_path = self.get_lg_path() or ""
-            self.prefilter_latest_request = ProjectPrefilterRequest(
-                token=token,
-                seq=seq,
-                lg_path=lg_path,
-                reason=reason,
-                source_language=source_language,
-                target_language=target_language,
-                mtool_optimizer_enable=mtool_optimizer_enable,
-            )
-            self.prefilter_pending = True
-            self.prefilter_cond.notify_all()
-
+        request, start_worker = self.prefilter_service.enqueue_request(
+            config,
+            reason=reason,
+            lg_path=lg_path,
+        )
         if not start_worker:
             return
 
-        # 先发事件锁 UI，避免“加载旧工程后立刻点击开始翻译”的竞态。
-        self.emit(
-            Base.Event.PROJECT_PREFILTER,
-            {
-                "sub_event": Base.ProjectPrefilterSubEvent.RUN,
-                "reason": reason,
-                "token": token,
-                "lg_path": lg_path,
-            },
-        )
+        self.emit_prefilter_run(request)
         threading.Thread(
-            target=self.project_prefilter_worker, args=(token,), daemon=True
+            target=self.project_prefilter_worker,
+            args=(request.token,),
+            daemon=True,
         ).start()
 
     def run_project_prefilter(self, config: Config, *, reason: str) -> None:
-        """执行预过滤并落库（同步）。
+        """同步执行预过滤。"""
 
-        注意：该方法会写 DB 且可能耗时；GUI 模式下应在后台线程调用。
-        """
-
-        # 翻译过程中 UI 会禁用相关开关，但这里仍做一次兜底。
         from module.Engine.Engine import Engine
 
-        if not self.is_loaded():
+        lg_path = self.get_lg_path()
+        if not lg_path or not self.is_loaded():
             return
         if Engine.get().get_status() != Base.TaskStatus.IDLE:
             return
 
-        source_language = str(config.source_language)
-        target_language = str(config.target_language)
-        mtool_optimizer_enable = bool(config.mtool_optimizer_enable)
+        request, should_run = self.prefilter_service.enqueue_sync_request(
+            config,
+            reason=reason,
+            lg_path=lg_path,
+        )
+        if not should_run or request is None:
+            return
 
-        with self.prefilter_cond:
-            if self.prefilter_running:
-                # 同步调用遇到“已有 worker 正在跑”时：只更新最新请求并等待其落库完成，保证 meta/items 一致。
-                token = self.prefilter_active_token
-                self.prefilter_request_seq += 1
-                seq = self.prefilter_request_seq
-                lg_path = self.get_lg_path() or ""
-                self.prefilter_latest_request = ProjectPrefilterRequest(
-                    token=token,
-                    seq=seq,
-                    lg_path=lg_path,
-                    reason=reason,
-                    source_language=source_language,
-                    target_language=target_language,
-                    mtool_optimizer_enable=mtool_optimizer_enable,
-                )
-                self.prefilter_pending = True
-                self.prefilter_cond.notify_all()
-                self.prefilter_cond.wait_for(lambda: not self.prefilter_running)
-                return
+        self.emit_prefilter_run(request)
+        self.project_prefilter_worker(request.token)
 
-            self.prefilter_token += 1
-            token = self.prefilter_token
-            self.prefilter_active_token = token
-            self.prefilter_running = True
-
-            self.prefilter_request_seq += 1
-            seq = self.prefilter_request_seq
-            lg_path = self.get_lg_path() or ""
-            self.prefilter_latest_request = ProjectPrefilterRequest(
-                token=token,
-                seq=seq,
-                lg_path=lg_path,
-                reason=reason,
-                source_language=source_language,
-                target_language=target_language,
-                mtool_optimizer_enable=mtool_optimizer_enable,
-            )
-            self.prefilter_pending = True
-            self.prefilter_cond.notify_all()
+    def emit_prefilter_run(self, request: ProjectPrefilterRequest) -> None:
+        """预过滤开始时统一发 RUN 事件。"""
 
         self.emit(
             Base.Event.PROJECT_PREFILTER,
             {
                 "sub_event": Base.ProjectPrefilterSubEvent.RUN,
-                "reason": reason,
-                "token": token,
-                "lg_path": lg_path,
+                "reason": request.reason,
+                "token": request.token,
+                "lg_path": request.lg_path,
             },
         )
-        self.project_prefilter_worker(token)
 
     def project_prefilter_worker(self, token: int) -> None:
-        """预过滤工作线程/同步入口。
-
-        - 串行执行：同一时间只允许一个 worker 运行
-        - 合并请求：运行中不断吸收最新请求，最终只保证落库的是“最后一次配置”
-        """
+        """预过滤工作线程入口。"""
 
         last_request: ProjectPrefilterRequest | None = None
         last_result: ProjectPrefilterResult | None = None
@@ -437,87 +329,39 @@ class DataManager(Base):
             {
                 "sub_event": Base.SubEvent.RUN,
                 "message": Localizer.get().toast_processing,
-                # 先显示不定进度：加载 items 前无法给出可信 total，避免进度条长时间停在 0%。
                 "indeterminate": True,
             },
         )
 
         try:
             while True:
-                with self.prefilter_cond:
-                    if not self.prefilter_pending:
-                        # 收尾事件放在锁内发出：避免新任务 show 被旧任务 hide 打断。
-                        if (
-                            updated
-                            and last_result is not None
-                            and last_request is not None
-                        ):
-                            LogManager.get().info(
-                                Localizer.get().engine_task_rule_filter.replace(
-                                    "{COUNT}", str(last_result.stats.rule_skipped)
-                                )
-                            )
-                            LogManager.get().info(
-                                Localizer.get().engine_task_language_filter.replace(
-                                    "{COUNT}", str(last_result.stats.language_skipped)
-                                )
-                            )
-                            # 仅在开关开启时输出 MTool 预处理日志，避免“未启用但仍提示已完成”的误导。
-                            if last_request.mtool_optimizer_enable:
-                                LogManager.get().info(
-                                    Localizer.get().translator_mtool_optimizer_pre_log.replace(
-                                        "{COUNT}", str(last_result.stats.mtool_skipped)
-                                    )
-                                )
-
-                            # 仅在控制台输出统计信息，避免 UI Toast 产生噪音。
-                            LogManager.get().print("")
-                            self.emit(
-                                Base.Event.PROJECT_PREFILTER,
-                                {
-                                    "sub_event": Base.ProjectPrefilterSubEvent.UPDATED,
-                                    "reason": last_request.reason,
-                                    "token": token,
-                                    "lg_path": last_request.lg_path,
-                                },
-                            )
-
-                        self.emit(
-                            Base.Event.PROGRESS_TOAST,
-                            {"sub_event": Base.SubEvent.DONE},
-                        )
+                request = self.prefilter_service.pop_pending_request()
+                if request is None:
+                    if updated and last_request is not None and last_result is not None:
+                        self.refresh_analysis_progress_snapshot_cache()
+                        self.log_prefilter_result(last_request, last_result)
                         self.emit(
                             Base.Event.PROJECT_PREFILTER,
                             {
-                                "sub_event": Base.ProjectPrefilterSubEvent.DONE,
-                                "reason": last_request.reason
-                                if last_request
-                                else "unknown",
+                                "sub_event": Base.ProjectPrefilterSubEvent.UPDATED,
+                                "reason": last_request.reason,
                                 "token": token,
-                                "lg_path": last_request.lg_path if last_request else "",
-                                "updated": updated,
-                                "error": False,
+                                "lg_path": last_request.lg_path,
                             },
                         )
 
-                        self.prefilter_running = False
-                        self.prefilter_active_token = 0
-                        self.prefilter_cond.notify_all()
-                        return
-
-                    request = self.prefilter_latest_request
-                    self.prefilter_pending = False
-
-                if request is None:
-                    continue
+                    self.emit_prefilter_finish(
+                        token=token,
+                        request=last_request,
+                        updated=updated,
+                        error=False,
+                    )
+                    self.prefilter_service.finish_worker()
+                    return
 
                 last_request = request
                 result = self.apply_project_prefilter_once(request)
-
-                with self.prefilter_cond:
-                    self.prefilter_last_handled_seq = request.seq
-                    self.prefilter_cond.notify_all()
-
+                self.prefilter_service.mark_request_handled(request)
                 if result is not None:
                     updated = True
                     last_result = result
@@ -545,48 +389,80 @@ class DataManager(Base):
                     "message": Localizer.get().task_failed,
                 },
             )
+            self.emit_prefilter_finish(
+                token=token,
+                request=last_request,
+                updated=updated,
+                error=True,
+            )
+            self.prefilter_service.finish_worker()
 
-            with self.prefilter_cond:
-                self.emit(
-                    Base.Event.PROGRESS_TOAST,
-                    {"sub_event": Base.SubEvent.DONE},
-                )
-                self.emit(
-                    Base.Event.PROJECT_PREFILTER,
-                    {
-                        "sub_event": Base.ProjectPrefilterSubEvent.DONE,
-                        "reason": last_request.reason if last_request else "unknown",
-                        "token": token,
-                        "lg_path": last_request.lg_path if last_request else "",
-                        "updated": updated,
-                        "error": True,
-                    },
-                )
+    def emit_prefilter_finish(
+        self,
+        *,
+        token: int,
+        request: ProjectPrefilterRequest | None,
+        updated: bool,
+        error: bool,
+    ) -> None:
+        """预过滤收尾时统一发 DONE 事件和隐藏进度。"""
 
-                self.prefilter_running = False
-                self.prefilter_active_token = 0
-                self.prefilter_cond.notify_all()
+        self.emit(Base.Event.PROGRESS_TOAST, {"sub_event": Base.SubEvent.DONE})
+        self.emit(
+            Base.Event.PROJECT_PREFILTER,
+            {
+                "sub_event": Base.ProjectPrefilterSubEvent.DONE,
+                "reason": request.reason if request else "unknown",
+                "token": token,
+                "lg_path": request.lg_path if request else "",
+                "updated": updated,
+                "error": error,
+            },
+        )
+
+    def log_prefilter_result(
+        self,
+        request: ProjectPrefilterRequest,
+        result: ProjectPrefilterResult,
+    ) -> None:
+        """输出预过滤统计日志。"""
+
+        logger = LogManager.get()
+        logger.info(
+            Localizer.get().engine_task_rule_filter.replace(
+                "{COUNT}",
+                str(result.stats.rule_skipped),
+            )
+        )
+        logger.info(
+            Localizer.get().engine_task_language_filter.replace(
+                "{COUNT}",
+                str(result.stats.language_skipped),
+            )
+        )
+        if request.mtool_optimizer_enable:
+            logger.info(
+                Localizer.get().translation_mtool_optimizer_pre_log.replace(
+                    "{COUNT}",
+                    str(result.stats.mtool_skipped),
+                )
+            )
+        logger.print("")
 
     def apply_project_prefilter_once(
-        self, request: ProjectPrefilterRequest
+        self,
+        request: ProjectPrefilterRequest,
     ) -> ProjectPrefilterResult | None:
-        """执行一次预过滤并写入 DB。
-
-        返回 None 表示：工程已切换/卸载，本次结果被丢弃。
-        """
+        """执行一次预过滤并写回数据库。"""
 
         if not self.is_loaded():
             return None
-
         lg_path = self.get_lg_path()
         if not lg_path or lg_path != request.lg_path:
             return None
 
-        self.item_service.clear_item_cache()
         items = self.get_all_items()
-        total = len(items)
-        progress_total = total * (3 if request.mtool_optimizer_enable else 2)
-        # 加载完成后切换为确定进度模式。
+        progress_total = len(items) * (3 if request.mtool_optimizer_enable else 2)
         self.emit(
             Base.Event.PROGRESS_TOAST,
             {
@@ -609,40 +485,18 @@ class DataManager(Base):
                 },
             )
 
-        result = ProjectPrefilter.apply(
+        return self.prefilter_service.apply_once(
+            request,
             items=items,
-            source_language=request.source_language,
-            target_language=request.target_language,
-            mtool_optimizer_enable=request.mtool_optimizer_enable,
             progress_cb=progress_cb,
         )
-
-        items_dict: list[dict[str, Any]] = []
-        for item in GapTool.iter(items):
-            items_dict.append(item.to_dict())
-
-        meta = {
-            "prefilter_config": result.prefilter_config,
-            "source_language": request.source_language,
-            "target_language": request.target_language,
-        }
-
-        # 落库前二次确认工程未切换，避免把旧工程结果写入新工程。
-        with self.state_lock:
-            if self.session.db is None or self.session.lg_path != request.lg_path:
-                return None
-            self.batch_service.update_batch(items=items_dict, meta=meta)
-
-        return result
-
-    # ===================== meta =====================
 
     def get_meta(self, key: str, default: Any = None) -> Any:
         return self.meta_service.get_meta(key, default)
 
     def set_meta(self, key: str, value: Any) -> None:
         self.meta_service.set_meta(key, value)
-        if key in RULE_META_KEYS:
+        if key in self.RULE_META_KEYS:
             self.emit_quality_rule_update(meta_keys=[key])
 
     def get_project_status(self) -> Base.ProjectStatus:
@@ -659,87 +513,169 @@ class DataManager(Base):
     def set_project_status(self, status: Base.ProjectStatus) -> None:
         self.set_meta("project_status", status.value)
 
-    def get_translation_extras(self) -> dict:
+    def get_translation_extras(self) -> dict[str, Any]:
         extras = self.get_meta("translation_extras", {})
         return extras if isinstance(extras, dict) else {}
 
-    def set_translation_extras(self, extras: dict) -> None:
+    def set_translation_extras(self, extras: dict[str, Any]) -> None:
         self.set_meta("translation_extras", extras)
 
-    def reset_failed_items_sync(self) -> dict[str, Any] | None:
-        """重置失败条目并同步进度元数据。
+    @staticmethod
+    def is_skipped_analysis_status(status: Base.ProjectStatus) -> bool:
+        return AnalysisService.is_skipped_analysis_status(status)
 
-        用途：
-        - GUI 的“重置失败项”按钮
-        - CLI 的 --reset_failed
+    @staticmethod
+    def is_analysis_control_code_text(text: str) -> bool:
+        return AnalysisFakeNameInjector.is_control_code_text(str(text).strip())
 
-        约束：该方法会写 DB；GUI 模式下应在后台线程调用。
-        """
-
-        if not self.is_loaded():
-            return None
-
-        items = self.get_all_items()
-        if not items:
-            return None
-
-        changed_items: list[dict[str, Any]] = []
-        for item in items:
-            if item.get_status() != Base.ProjectStatus.ERROR:
-                continue
-
-            item.set_dst("")
-            item.set_status(Base.ProjectStatus.NONE)
-            item.set_retry_count(0)
-
-            item_dict = item.to_dict()
-            if isinstance(item_dict.get("id"), int):
-                changed_items.append(item_dict)
-
-        processed_line = sum(
-            1 for item in items if item.get_status() == Base.ProjectStatus.PROCESSED
-        )
-        error_line = sum(
-            1 for item in items if item.get_status() == Base.ProjectStatus.ERROR
-        )
-        total_line = sum(
-            1
-            for item in items
-            if item.get_status()
-            in (
-                Base.ProjectStatus.NONE,
-                Base.ProjectStatus.PROCESSED,
-                Base.ProjectStatus.ERROR,
-            )
+    @classmethod
+    def is_analysis_control_code_self_mapping(cls, src: str, dst: str) -> bool:
+        return AnalysisFakeNameInjector.is_control_code_self_mapping(
+            str(src).strip(),
+            str(dst).strip(),
         )
 
-        extras = self.get_translation_extras()
-        extras["processed_line"] = processed_line
-        extras["error_line"] = error_line
-        extras["line"] = processed_line + error_line
-        extras["total_line"] = total_line
+    def get_analysis_extras(self) -> dict[str, Any]:
+        return self.analysis_service.get_analysis_extras()
 
-        project_status = (
-            Base.ProjectStatus.PROCESSING
-            if any(item.get_status() == Base.ProjectStatus.NONE for item in items)
-            else Base.ProjectStatus.PROCESSED
+    def set_analysis_extras(self, extras: dict[str, Any]) -> None:
+        self.analysis_service.set_analysis_extras(extras)
+
+    def normalize_analysis_progress_snapshot(
+        self,
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.analysis_service.normalize_analysis_progress_snapshot(snapshot)
+
+    def get_analysis_item_checkpoints(self) -> dict[int, dict[str, Any]]:
+        return self.analysis_service.get_analysis_item_checkpoints()
+
+    def upsert_analysis_item_checkpoints(
+        self,
+        checkpoints: list[dict[str, Any]],
+    ) -> dict[int, dict[str, Any]]:
+        return self.analysis_service.upsert_analysis_item_checkpoints(checkpoints)
+
+    def get_analysis_candidate_aggregate(self) -> dict[str, dict[str, Any]]:
+        return self.analysis_service.get_analysis_candidate_aggregate()
+
+    def get_analysis_candidate_count(self) -> int:
+        return self.analysis_service.get_analysis_candidate_count()
+
+    def upsert_analysis_candidate_aggregate(
+        self,
+        aggregates: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        return self.analysis_service.upsert_analysis_candidate_aggregate(aggregates)
+
+    def merge_analysis_candidate_aggregate(
+        self,
+        incoming_pool: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        return self.analysis_service.merge_analysis_candidate_aggregate(incoming_pool)
+
+    def commit_analysis_task_result(
+        self,
+        *,
+        checkpoints: list[dict[str, Any]] | None = None,
+        glossary_entries: list[dict[str, Any]] | None = None,
+        progress_snapshot: dict[str, Any] | None = None,
+    ) -> int:
+        return self.analysis_service.commit_analysis_task_result(
+            checkpoints=checkpoints,
+            glossary_entries=glossary_entries,
+            progress_snapshot=progress_snapshot,
         )
 
-        # 单次事务写入：确保 items/meta 一致。
-        self.update_batch(
-            items=changed_items or None,
-            meta={
-                "translation_extras": extras,
-                "project_status": project_status,
-            },
+    def commit_analysis_task_batch(
+        self,
+        *,
+        success_checkpoints: list[dict[str, Any]] | None = None,
+        error_checkpoints: list[dict[str, Any]] | None = None,
+        glossary_entries: list[dict[str, Any]] | None = None,
+        progress_snapshot: dict[str, Any] | None = None,
+    ) -> int:
+        return self.analysis_service.commit_analysis_task_batch(
+            success_checkpoints=success_checkpoints,
+            error_checkpoints=error_checkpoints,
+            glossary_entries=glossary_entries,
+            progress_snapshot=progress_snapshot,
         )
 
-        return extras
+    def build_analysis_glossary_from_candidates(self) -> list[dict[str, Any]]:
+        return self.analysis_service.build_analysis_glossary_from_candidates()
 
-    # ===================== rules =====================
+    def build_analysis_glossary_import_preview(
+        self,
+        glossary_entries: list[dict[str, Any]],
+    ) -> AnalysisGlossaryImportPreview:
+        return self.analysis_service.build_analysis_glossary_import_preview(
+            glossary_entries
+        )
+
+    def filter_analysis_glossary_import_candidates(
+        self,
+        glossary_entries: list[dict[str, Any]],
+        preview: AnalysisGlossaryImportPreview,
+    ) -> list[dict[str, Any]]:
+        return self.analysis_service.filter_analysis_glossary_import_candidates(
+            glossary_entries,
+            preview,
+        )
+
+    def import_analysis_candidates(
+        self,
+        expected_lg_path: str | None = None,
+    ) -> int | None:
+        imported = self.analysis_service.import_analysis_candidates(expected_lg_path)
+        if imported and imported > 0:
+            self.emit_quality_rule_update(rule_types=[LGDatabase.RuleType.GLOSSARY])
+        return imported
+
+    def clear_analysis_progress(self) -> None:
+        self.analysis_service.clear_analysis_progress()
+
+    def clear_analysis_candidates_and_progress(self) -> None:
+        self.analysis_service.clear_analysis_candidates_and_progress()
+
+    def reset_failed_analysis_checkpoints(self) -> int:
+        return self.analysis_service.reset_failed_analysis_checkpoints()
+
+    def get_analysis_status_summary(self) -> dict[str, Any]:
+        return self.analysis_service.get_analysis_status_summary()
+
+    def get_analysis_progress_snapshot(self) -> dict[str, Any]:
+        return self.analysis_service.get_analysis_progress_snapshot()
+
+    def refresh_analysis_progress_snapshot_cache(self) -> dict[str, Any]:
+        return self.analysis_service.refresh_analysis_progress_snapshot_cache()
+
+    def update_analysis_progress_snapshot(
+        self,
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.analysis_service.update_analysis_progress_snapshot(snapshot)
+
+    def get_pending_analysis_items(self) -> list[Item]:
+        return self.analysis_service.get_pending_analysis_items()
+
+    def update_analysis_task_error(
+        self,
+        checkpoints: list[dict[str, Any]],
+        progress_snapshot: dict[str, Any] | None = None,
+    ) -> dict[int, dict[str, Any]]:
+        return self.analysis_service.update_analysis_task_error(
+            checkpoints,
+            progress_snapshot=progress_snapshot,
+        )
+
+    def reset_failed_translation_items_sync(self) -> dict[str, Any] | None:
+        """翻译域统一入口，避免继续从分析服务借道。"""
+
+        return self.translation_reset_service.reset_failed_translation_items_sync()
 
     def get_rules_cached(self, rule_type: LGDatabase.RuleType) -> list[dict[str, Any]]:
-        return self.rule_service.get_rules_cached(rule_type)
+        return self.quality_rule_service.get_rules_cached(rule_type)
 
     def set_rules_cached(
         self,
@@ -747,38 +683,25 @@ class DataManager(Base):
         data: list[dict[str, Any]],
         save: bool = True,
     ) -> None:
-        normalized = self.normalize_quality_rules_for_write(rule_type, data)
-        self.rule_service.set_rules_cached(rule_type, normalized, save)
+        self.quality_rule_service.set_rules_cached(rule_type, data, save)
         if save:
             self.emit_quality_rule_update(rule_types=[rule_type])
 
     def normalize_quality_rules_for_write(
-        self, rule_type: LGDatabase.RuleType, data: list[dict[str, Any]]
+        self,
+        rule_type: LGDatabase.RuleType,
+        data: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """写入口兜底：落库前统一收敛重复与空 src。
-
-        为什么放在 DataManager：这里是规则写入的权威入口，能覆盖 UI 手动保存/导入、
-        自动术语表写回、以及未来新增入口，保证落库后不变式成立。
-        """
-
-        try:
-            quality_type = QualityRuleMerger.RuleType(rule_type.value)
-        except ValueError:
-            return data
-
-        merged, _ = QualityRuleMerger.merge(
-            rule_type=quality_type,
-            existing=[],
-            incoming=data,
-            merge_mode=QualityRuleMerger.MergeMode.OVERWRITE,
+        return self.quality_rule_service.normalize_quality_rules_for_write(
+            rule_type,
+            data,
         )
-        return merged
 
     def get_rule_text_cached(self, rule_type: LGDatabase.RuleType) -> str:
-        return self.rule_service.get_rule_text_cached(rule_type)
+        return self.quality_rule_service.get_rule_text_cached(rule_type)
 
     def set_rule_text_cached(self, rule_type: LGDatabase.RuleType, text: str) -> None:
-        self.rule_service.set_rule_text_cached(rule_type, text)
+        self.quality_rule_service.set_rule_text_cached(rule_type, text)
         self.emit_quality_rule_update(rule_types=[rule_type])
 
     def emit_quality_rule_update(
@@ -794,135 +717,112 @@ class DataManager(Base):
         self.emit(Base.Event.QUALITY_RULE_UPDATE, payload)
 
     def get_glossary(self) -> list[dict[str, Any]]:
-        return self.get_rules_cached(LGDatabase.RuleType.GLOSSARY)
+        return self.quality_rule_service.get_glossary()
 
     def set_glossary(self, data: list[dict[str, Any]], save: bool = True) -> None:
-        self.set_rules_cached(LGDatabase.RuleType.GLOSSARY, data, save)
+        self.quality_rule_service.set_glossary(data, save)
+        if save:
+            self.emit_quality_rule_update(rule_types=[LGDatabase.RuleType.GLOSSARY])
 
     def merge_glossary_incoming(
         self,
         incoming: list[dict[str, Any]],
         *,
-        merge_mode: QualityRuleMerger.MergeMode,
+        merge_mode: Any,
         save: bool = False,
-    ) -> tuple[list[dict[str, Any]] | None, QualityRuleMerger.Report]:
-        """将 incoming 合并进当前 glossary，并按 merge_mode 收敛重复。
-
-        自动术语表写回是隐式入口，必须用 FILL_EMPTY（只补空、且不改变
-        case_sensitive），避免在翻译过程中覆盖用户的显式编辑。
-        """
-
-        with self.state_lock:
-            current = self.get_glossary()
-            merged, report = QualityRuleMerger.merge(
-                rule_type=QualityRuleMerger.RuleType.GLOSSARY,
-                existing=current,
-                incoming=incoming,
-                merge_mode=merge_mode,
-            )
-
-            changed = any(
-                (
-                    report.added,
-                    report.updated,
-                    report.filled,
-                    report.deduped,
-                    report.skipped_empty_src,
-                )
-            )
-            if not changed:
-                return None, report
-
-            # 仅更新缓存；实际写入由调用方决定是否通过 update_batch 提交。
-            self.set_glossary(merged, save=save)
-            return merged, report
+    ) -> tuple[list[dict[str, Any]] | None, Any]:
+        merged, report = self.quality_rule_service.merge_glossary_incoming(
+            incoming,
+            merge_mode=merge_mode,
+            save=save,
+        )
+        if merged is not None and save:
+            self.emit_quality_rule_update(rule_types=[LGDatabase.RuleType.GLOSSARY])
+        return merged, report
 
     def get_glossary_enable(self) -> bool:
-        return bool(self.get_meta("glossary_enable", True))
+        return self.quality_rule_service.get_glossary_enable()
 
     def set_glossary_enable(self, enable: bool) -> None:
-        self.set_meta("glossary_enable", bool(enable))
+        self.quality_rule_service.set_glossary_enable(enable)
 
     def get_text_preserve(self) -> list[dict[str, Any]]:
-        return self.get_rules_cached(LGDatabase.RuleType.TEXT_PRESERVE)
+        return self.quality_rule_service.get_text_preserve()
 
     def set_text_preserve(self, data: list[dict[str, Any]]) -> None:
-        self.set_rules_cached(LGDatabase.RuleType.TEXT_PRESERVE, data, True)
+        self.quality_rule_service.set_text_preserve(data)
+        self.emit_quality_rule_update(rule_types=[LGDatabase.RuleType.TEXT_PRESERVE])
 
     def get_text_preserve_mode(self) -> TextPreserveMode:
-        raw = self.get_meta(
-            "text_preserve_mode", __class__.TextPreserveMode.SMART.value
-        )
-        if isinstance(raw, str):
-            try:
-                return __class__.TextPreserveMode(raw)
-            except ValueError:
-                pass
-
-        return __class__.TextPreserveMode.SMART
+        return self.quality_rule_service.get_text_preserve_mode()
 
     def set_text_preserve_mode(self, mode: TextPreserveMode | str) -> None:
-        try:
-            normalized = (
-                mode
-                if isinstance(mode, __class__.TextPreserveMode)
-                else __class__.TextPreserveMode(str(mode))
-            )
-        except ValueError:
-            normalized = __class__.TextPreserveMode.OFF
-
-        # 新语义的唯一权威来源
-        self.set_meta("text_preserve_mode", normalized.value)
+        self.quality_rule_service.set_text_preserve_mode(mode)
 
     def get_pre_replacement(self) -> list[dict[str, Any]]:
-        return self.get_rules_cached(LGDatabase.RuleType.PRE_REPLACEMENT)
+        return self.quality_rule_service.get_pre_replacement()
 
     def set_pre_replacement(self, data: list[dict[str, Any]]) -> None:
-        self.set_rules_cached(LGDatabase.RuleType.PRE_REPLACEMENT, data, True)
+        self.quality_rule_service.set_pre_replacement(data)
+        self.emit_quality_rule_update(rule_types=[LGDatabase.RuleType.PRE_REPLACEMENT])
 
     def get_pre_replacement_enable(self) -> bool:
-        return bool(self.get_meta("pre_translation_replacement_enable", True))
+        return self.quality_rule_service.get_pre_replacement_enable()
 
     def set_pre_replacement_enable(self, enable: bool) -> None:
-        self.set_meta("pre_translation_replacement_enable", bool(enable))
+        self.quality_rule_service.set_pre_replacement_enable(enable)
 
     def get_post_replacement(self) -> list[dict[str, Any]]:
-        return self.get_rules_cached(LGDatabase.RuleType.POST_REPLACEMENT)
+        return self.quality_rule_service.get_post_replacement()
 
     def set_post_replacement(self, data: list[dict[str, Any]]) -> None:
-        self.set_rules_cached(LGDatabase.RuleType.POST_REPLACEMENT, data, True)
+        self.quality_rule_service.set_post_replacement(data)
+        self.emit_quality_rule_update(rule_types=[LGDatabase.RuleType.POST_REPLACEMENT])
 
     def get_post_replacement_enable(self) -> bool:
-        return bool(self.get_meta("post_translation_replacement_enable", True))
+        return self.quality_rule_service.get_post_replacement_enable()
 
     def set_post_replacement_enable(self, enable: bool) -> None:
-        self.set_meta("post_translation_replacement_enable", bool(enable))
+        self.quality_rule_service.set_post_replacement_enable(enable)
 
-    def get_custom_prompt_zh(self) -> str:
-        return self.get_rule_text_cached(LGDatabase.RuleType.CUSTOM_PROMPT_ZH)
+    def get_translation_prompt(self) -> str:
+        return self.quality_rule_service.get_translation_prompt()
 
-    def set_custom_prompt_zh(self, text: str) -> None:
-        self.set_rule_text_cached(LGDatabase.RuleType.CUSTOM_PROMPT_ZH, text)
+    def set_translation_prompt(self, text: str) -> None:
+        self.quality_rule_service.set_translation_prompt(text)
+        self.emit_quality_rule_update(
+            rule_types=[LGDatabase.RuleType.TRANSLATION_PROMPT]
+        )
 
-    def get_custom_prompt_zh_enable(self) -> bool:
-        return bool(self.get_meta("custom_prompt_zh_enable", False))
+    def get_translation_prompt_enable(self) -> bool:
+        return self.quality_rule_service.get_translation_prompt_enable()
 
-    def set_custom_prompt_zh_enable(self, enable: bool) -> None:
-        self.set_meta("custom_prompt_zh_enable", bool(enable))
+    def set_translation_prompt_enable(self, enable: bool) -> None:
+        self.quality_rule_service.set_translation_prompt_enable(enable)
 
-    def get_custom_prompt_en(self) -> str:
-        return self.get_rule_text_cached(LGDatabase.RuleType.CUSTOM_PROMPT_EN)
+    def get_analysis_prompt(self) -> str:
+        return self.quality_rule_service.get_analysis_prompt()
 
-    def set_custom_prompt_en(self, text: str) -> None:
-        self.set_rule_text_cached(LGDatabase.RuleType.CUSTOM_PROMPT_EN, text)
+    def set_analysis_prompt(self, text: str) -> None:
+        self.quality_rule_service.set_analysis_prompt(text)
+        self.emit_quality_rule_update(rule_types=[LGDatabase.RuleType.ANALYSIS_PROMPT])
 
-    def get_custom_prompt_en_enable(self) -> bool:
-        return bool(self.get_meta("custom_prompt_en_enable", False))
+    def get_analysis_prompt_enable(self) -> bool:
+        return self.quality_rule_service.get_analysis_prompt_enable()
 
-    def set_custom_prompt_en_enable(self, enable: bool) -> None:
-        self.set_meta("custom_prompt_en_enable", bool(enable))
+    def set_analysis_prompt_enable(self, enable: bool) -> None:
+        self.quality_rule_service.set_analysis_prompt_enable(enable)
 
-    # ===================== items =====================
+    @staticmethod
+    def normalize_rule_statistics_text(value: Any) -> str:
+        return QualityRuleService.normalize_rule_statistics_text(value)
+
+    @staticmethod
+    def normalize_rule_statistics_status(value: Any) -> Base.ProjectStatus:
+        return QualityRuleService.normalize_rule_statistics_status(value)
+
+    def collect_rule_statistics_texts(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        return self.quality_rule_service.collect_rule_statistics_texts()
 
     def clear_item_cache(self) -> None:
         self.item_service.clear_item_cache()
@@ -931,13 +831,6 @@ class DataManager(Base):
         return self.item_service.get_all_items()
 
     def get_all_item_dicts(self) -> list[dict[str, Any]]:
-        """获取 items 的原始 dict 快照。
-
-        统计类后台任务只需要只读文本数据；直接复用 ItemService 的快照接口，
-        可以避免在 UI 线程构造大量 Item 对象。
-        """
-
-        # 返回浅拷贝快照，防止后台统计流程意外修改 ItemService 缓存中的原始 dict。
         return [dict(item) for item in self.item_service.get_all_item_dicts()]
 
     def save_item(self, item: Item) -> int:
@@ -953,11 +846,10 @@ class DataManager(Base):
         meta: dict[str, Any] | None = None,
     ) -> None:
         self.batch_service.update_batch(items=items, rules=rules, meta=meta)
-
         if rules:
             self.emit_quality_rule_update(rule_types=list(rules.keys()))
         if meta:
-            keys = [k for k in meta.keys() if k in RULE_META_KEYS]
+            keys = [key for key in meta.keys() if key in self.RULE_META_KEYS]
             if keys:
                 self.emit_quality_rule_update(meta_keys=keys)
 
@@ -968,8 +860,6 @@ class DataManager(Base):
     ) -> list[Item]:
         return self.translation_item_service.get_items_for_translation(config, mode)
 
-    # ===================== assets =====================
-
     def get_all_asset_paths(self) -> list[str]:
         return self.asset_service.get_all_asset_paths()
 
@@ -979,104 +869,48 @@ class DataManager(Base):
     def get_asset_decompressed(self, rel_path: str) -> bytes | None:
         return self.asset_service.get_asset_decompressed(rel_path)
 
-    # ===================== project file ops =====================
-
     def is_file_op_running(self) -> bool:
-        with self.file_op_lock:
-            return self.file_op_running
+        return self.project_file_service.is_file_op_running()
 
     def try_begin_file_operation(self) -> bool:
-        with self.file_op_lock:
-            if self.file_op_running:
-                return False
-            self.file_op_running = True
-            return True
+        return self.project_file_service.try_begin_file_operation()
 
     def finish_file_operation(self) -> None:
-        with self.file_op_lock:
-            self.file_op_running = False
+        self.project_file_service.finish_file_operation()
 
-    def build_workbench_snapshot(self) -> WorkbenchSnapshot:
-        """构建工作台文件列表快照。
+    def emit_task_running_warning(self) -> None:
+        """统一忙碌态提示。"""
 
-        该方法不触达 UI，可安全在后台线程调用。
-        """
-
-        asset_paths = self.get_all_asset_paths()
-        item_dicts = self.get_all_item_dicts()
-
-        # 工作台的条目统计口径对齐“可翻译条目”，避免把预过滤跳过项也算作未翻译。
-        counted_statuses = {
-            Base.ProjectStatus.NONE,
-            Base.ProjectStatus.PROCESSING,
-            Base.ProjectStatus.PROCESSED,
-            Base.ProjectStatus.PROCESSED_IN_PAST,
-            Base.ProjectStatus.ERROR,
-        }
-        translated_statuses = {
-            Base.ProjectStatus.PROCESSED,
-            Base.ProjectStatus.PROCESSED_IN_PAST,
-        }
-
-        total_items = 0
-        translated = 0
-        count_by_path: dict[str, int] = defaultdict(int)
-        file_type_by_path: dict[str, Item.FileType] = {}
-        for item in GapTool.iter(item_dicts):
-            rel_path = item.get("file_path")
-            if not isinstance(rel_path, str) or rel_path == "":
-                continue
-
-            if rel_path not in file_type_by_path:
-                raw_type = item.get("file_type")
-                if (
-                    isinstance(raw_type, str)
-                    and raw_type
-                    and raw_type != Item.FileType.NONE
-                ):
-                    try:
-                        file_type_by_path[rel_path] = Item.FileType(raw_type)
-                    except ValueError:
-                        # 旧数据或外部导入可能存在未知类型，这里保持 NONE。
-                        pass
-
-            status = item.get("status", Base.ProjectStatus.NONE)
-            if status not in counted_statuses:
-                continue
-
-            total_items += 1
-            count_by_path[rel_path] += 1
-            if status in translated_statuses:
-                translated += 1
-
-        untranslated = max(0, total_items - translated)
-        entries: list[WorkbenchFileEntrySnapshot] = []
-        for rel_path in GapTool.iter(asset_paths):
-            entries.append(
-                WorkbenchFileEntrySnapshot(
-                    rel_path=rel_path,
-                    item_count=count_by_path.get(rel_path, 0),
-                    file_type=file_type_by_path.get(rel_path, Item.FileType.NONE),
-                )
-            )
-
-        return WorkbenchSnapshot(
-            file_count=len(asset_paths),
-            total_items=total_items,
-            translated=translated,
-            untranslated=untranslated,
-            entries=tuple(entries),
+        self.emit(
+            Base.Event.TOAST,
+            {
+                "type": Base.ToastType.WARNING,
+                "message": Localizer.get().task_running,
+            },
         )
 
-    def schedule_add_file(self, file_path: str) -> None:
+    def try_begin_guarded_file_operation(self) -> bool:
+        """在数据层兜底拦住忙碌态文件操作。"""
+
+        from module.Engine.Engine import Engine
+
+        if Engine.get().get_status() != Base.TaskStatus.IDLE:
+            self.emit_task_running_warning()
+            return False
         if not self.try_begin_file_operation():
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.WARNING,
-                    "message": Localizer.get().task_running,
-                },
-            )
+            self.emit_task_running_warning()
+            return False
+        return True
+
+    def schedule_guarded_file_operation(
+        self,
+        progress_message: str,
+        action: Callable[[], ProjectFileMutationResult],
+        error_message: str,
+    ) -> None:
+        """统一封装文件操作线程。"""
+
+        if not self.try_begin_guarded_file_operation():
             return
 
         def worker() -> None:
@@ -1084,13 +918,13 @@ class DataManager(Base):
                 Base.Event.PROGRESS_TOAST,
                 {
                     "sub_event": Base.SubEvent.RUN,
-                    "message": Localizer.get().workbench_progress_adding_file,
+                    "message": progress_message,
                     "indeterminate": True,
                 },
             )
             try:
-                self.add_file(file_path)
-                # 文件变更会引入/移除条目：需要重新跑预过滤，确保跳过/重复等状态一致。
+                result = action()
+                self.emit_project_file_update(result)
                 self.run_project_prefilter(Config().load(), reason="file_op")
             except ValueError as e:
                 self.emit(
@@ -1098,407 +932,102 @@ class DataManager(Base):
                     {"type": Base.ToastType.WARNING, "message": str(e)},
                 )
             except Exception as e:
-                LogManager.get().error(f"Failed to add file: {file_path}", e)
+                LogManager.get().error(error_message, e)
                 self.emit(
                     Base.Event.TOAST,
                     {"type": Base.ToastType.ERROR, "message": str(e)},
                 )
             finally:
-                self.emit(
-                    Base.Event.PROGRESS_TOAST,
-                    {"sub_event": Base.SubEvent.DONE},
-                )
+                self.emit(Base.Event.PROGRESS_TOAST, {"sub_event": Base.SubEvent.DONE})
                 self.finish_file_operation()
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def schedule_update_file(self, rel_path: str, new_file_path: str) -> None:
-        if not self.try_begin_file_operation():
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.WARNING,
-                    "message": Localizer.get().task_running,
-                },
-            )
-            return
+    def emit_project_file_update(self, result: ProjectFileMutationResult) -> None:
+        """统一发工程文件更新事件。"""
 
-        def worker() -> None:
-            self.emit(
-                Base.Event.PROGRESS_TOAST,
-                {
-                    "sub_event": Base.SubEvent.RUN,
-                    "message": Localizer.get().workbench_progress_updating_file,
-                    "indeterminate": True,
-                },
-            )
-            try:
-                self.update_file(rel_path, new_file_path)
-                self.run_project_prefilter(Config().load(), reason="file_op")
-            except ValueError as e:
-                self.emit(
-                    Base.Event.TOAST,
-                    {"type": Base.ToastType.WARNING, "message": str(e)},
-                )
-            except Exception as e:
-                LogManager.get().error(
-                    f"Failed to update file: {rel_path} -> {new_file_path}",
-                    e,
-                )
-                self.emit(
-                    Base.Event.TOAST,
-                    {"type": Base.ToastType.ERROR, "message": str(e)},
-                )
-            finally:
-                self.emit(
-                    Base.Event.PROGRESS_TOAST,
-                    {"sub_event": Base.SubEvent.DONE},
-                )
-                self.finish_file_operation()
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def schedule_reset_file(self, rel_path: str) -> None:
-        if not self.try_begin_file_operation():
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.WARNING,
-                    "message": Localizer.get().task_running,
-                },
-            )
-            return
-
-        def worker() -> None:
-            self.emit(
-                Base.Event.PROGRESS_TOAST,
-                {
-                    "sub_event": Base.SubEvent.RUN,
-                    "message": Localizer.get().workbench_progress_resetting_file,
-                    "indeterminate": True,
-                },
-            )
-            try:
-                self.reset_file(rel_path)
-                self.run_project_prefilter(Config().load(), reason="file_op")
-            except ValueError as e:
-                self.emit(
-                    Base.Event.TOAST,
-                    {"type": Base.ToastType.WARNING, "message": str(e)},
-                )
-            except Exception as e:
-                LogManager.get().error(f"Failed to reset file: {rel_path}", e)
-                self.emit(
-                    Base.Event.TOAST,
-                    {"type": Base.ToastType.ERROR, "message": str(e)},
-                )
-            finally:
-                self.emit(
-                    Base.Event.PROGRESS_TOAST,
-                    {"sub_event": Base.SubEvent.DONE},
-                )
-                self.finish_file_operation()
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def schedule_delete_file(self, rel_path: str) -> None:
-        if not self.try_begin_file_operation():
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.WARNING,
-                    "message": Localizer.get().task_running,
-                },
-            )
-            return
-
-        def worker() -> None:
-            self.emit(
-                Base.Event.PROGRESS_TOAST,
-                {
-                    "sub_event": Base.SubEvent.RUN,
-                    "message": Localizer.get().workbench_progress_deleting_file,
-                    "indeterminate": True,
-                },
-            )
-            try:
-                self.delete_file(rel_path)
-                self.run_project_prefilter(Config().load(), reason="file_op")
-            except ValueError as e:
-                self.emit(
-                    Base.Event.TOAST,
-                    {"type": Base.ToastType.WARNING, "message": str(e)},
-                )
-            except Exception as e:
-                LogManager.get().error(f"Failed to delete file: {rel_path}", e)
-                self.emit(
-                    Base.Event.TOAST,
-                    {"type": Base.ToastType.ERROR, "message": str(e)},
-                )
-            finally:
-                self.emit(
-                    Base.Event.PROGRESS_TOAST,
-                    {"sub_event": Base.SubEvent.DONE},
-                )
-                self.finish_file_operation()
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def add_file(self, file_path: str) -> None:
-        ext = Path(file_path).suffix.lower()
-        if ext not in self.get_supported_extensions():
-            raise ValueError(Localizer.get().workbench_msg_unsupported_format)
-
-        rel_path = os.path.basename(file_path)
-
-        with self.state_lock:
-            db = self.session.db
-        if db is None:
-            raise RuntimeError("工程未加载")
-
-        if db.asset_path_exists(rel_path):
-            raise ValueError(Localizer.get().workbench_msg_file_exists)
-
-        with open(file_path, "rb") as f:
-            original_data = f.read()
-
-        # 避免循环依赖：延迟导入 FileManager
-        from module.File.FileManager import FileManager
-
-        file_manager = FileManager(Config().load())
-        items = file_manager.parse_asset(rel_path, original_data)
-        items_dicts: list[dict[str, Any]] = []
-        for item in GapTool.iter(items):
-            items_dicts.append(item.to_dict())
-
-        compressed = ZstdCodec.compress(original_data)
-        db.add_asset(rel_path, compressed, len(original_data))
-        db.insert_items(items_dicts)
-
-        self.item_service.clear_item_cache()
-        self.emit(Base.Event.PROJECT_FILE_UPDATE, {"rel_path": rel_path})
-
-    def update_file(self, rel_path: str, new_file_path: str) -> dict:
-        """更新工程内文件：以新文件为准，仅继承旧工程的完成态译文成果。"""
-        with self.state_lock:
-            db = self.session.db
-        if db is None:
-            raise RuntimeError("工程未加载")
-
-        def build_target_rel_path(old_rel_path: str, file_path: str) -> str:
-            # 更新时只跟随“文件名”变化，目录层级保持不变，避免隐式移动文件。
-            new_name = os.path.basename(file_path)
-            if not new_name:
-                return old_rel_path
-            parent = Path(old_rel_path).parent
-            if str(parent) in {".", ""}:
-                return new_name
-            return str(parent / new_name)
-
-        target_rel_path = build_target_rel_path(rel_path, new_file_path)
-        if target_rel_path.casefold() == rel_path.casefold():
-            target_rel_path = rel_path
-
-        old_items = db.get_items_by_file_path(rel_path)
-
-        with open(new_file_path, "rb") as f:
-            original_data = f.read()
-
-        from module.File.FileManager import FileManager
-
-        file_manager = FileManager(Config().load())
-        new_items = file_manager.parse_asset(target_rel_path, original_data)
-        new_items_dicts: list[dict[str, Any]] = []
-        for item in GapTool.iter(new_items):
-            new_items_dicts.append(item.to_dict())
-
-        def pick_file_type(items: list[dict[str, Any]]) -> str:
-            for item in GapTool.iter(items):
-                raw = item.get("file_type")
-                if isinstance(raw, str) and raw and raw != Item.FileType.NONE:
-                    return raw
-            return str(Item.FileType.NONE)
-
-        old_type = pick_file_type(old_items)
-        new_type = pick_file_type(new_items_dicts)
-        if old_type != new_type:
-            raise ValueError(Localizer.get().workbench_msg_update_format_mismatch)
-
-        if not db.asset_path_exists(rel_path):
-            raise ValueError(Localizer.get().workbench_msg_file_not_found)
-
-        if target_rel_path.casefold() != rel_path.casefold():
-            for existing in db.get_all_asset_paths():
-                if not isinstance(existing, str) or existing == "":
-                    continue
-                if existing.casefold() == rel_path.casefold():
-                    continue
-                if existing.casefold() == target_rel_path.casefold():
-                    raise ValueError(
-                        Localizer.get().workbench_msg_update_name_conflict.replace(
-                            "{NAME}", existing
-                        )
-                    )
-
-        # 同一 src 可能对应多种译法：优先选择出现次数最多的 dst；若并列则取最早出现的。
-        src_best: dict[str, dict[str, Any]] = {}
-        src_seen_order: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for item in GapTool.iter(old_items):
-            src = item.get("src")
-            if isinstance(src, str):
-                src_seen_order[src].append(item)
-
-        for src, candidates in src_seen_order.items():
-            dst_count: dict[str, int] = {}
-            first_index: dict[str, int] = {}
-            first_item: dict[str, dict[str, Any]] = {}
-            for idx, cand in enumerate(candidates):
-                dst = cand.get("dst")
-                dst_key = dst if isinstance(dst, str) else ""
-                dst_count[dst_key] = dst_count.get(dst_key, 0) + 1
-                if dst_key not in first_index:
-                    first_index[dst_key] = idx
-                    # best_dst 的 tie-break 依赖“最早出现”，因此这里缓存第一个候选即可。
-                    first_item[dst_key] = cand
-
-            # max by (count desc, first_index asc)
-            best_dst = min(
-                dst_count,
-                key=lambda d: (-dst_count[d], first_index.get(d, 10**9)),
-            )
-            # 选择最早出现的 best_dst 条目以保留其他字段（status/name_dst/etc.）。
-            src_best[src] = first_item[best_dst]
-
-        # “更新文件”的语义：新文件为权威来源；旧工程只允许提供“已完成译文成果”。
-        inheritable_statuses = {
-            Base.ProjectStatus.PROCESSED,
-            Base.ProjectStatus.PROCESSED_IN_PAST,
-        }
-        # 结构性状态来自解析/预过滤的可重算结果（例如 EXCLUDED），不应被旧工程完成态覆盖。
-        structural_statuses = {
-            Base.ProjectStatus.EXCLUDED,
-            Base.ProjectStatus.RULE_SKIPPED,
-            Base.ProjectStatus.LANGUAGE_SKIPPED,
-            Base.ProjectStatus.DUPLICATED,
-        }
-
-        def normalize_status(raw: object) -> Base.ProjectStatus:
-            if isinstance(raw, Base.ProjectStatus):
-                return raw
-            if isinstance(raw, str):
-                try:
-                    return Base.ProjectStatus(raw)
-                except ValueError:
-                    return Base.ProjectStatus.NONE
-            return Base.ProjectStatus.NONE
-
-        matched = 0
-        for item in GapTool.iter(new_items_dicts):
-            src = item.get("src")
-            if not isinstance(src, str):
-                continue
-
-            old = src_best.get(src)
-            if not old:
-                continue
-
-            old_status = normalize_status(old.get("status", Base.ProjectStatus.NONE))
-            if old_status in inheritable_statuses:
-                item["dst"] = old.get("dst", "")
-                item["name_dst"] = old.get("name_dst")
-                item["retry_count"] = old.get("retry_count", 0)
-
-                new_status = normalize_status(
-                    item.get("status", Base.ProjectStatus.NONE)
-                )
-                if new_status not in structural_statuses:
-                    item["status"] = old_status
-
-            # matched 表示“按 src 找到旧条目候选”，不等价于“发生了继承”。
-            matched += 1
-
-        compressed = ZstdCodec.compress(original_data)
-        with db.connection() as conn:
-            db.update_asset(rel_path, compressed, len(original_data), conn=conn)
-            if target_rel_path != rel_path:
-                db.update_asset_path(rel_path, target_rel_path, conn=conn)
-            db.delete_items_by_file_path(rel_path, conn=conn)
-            db.insert_items(new_items_dicts, conn=conn)
-            conn.commit()
-
-        self.item_service.clear_item_cache()
-        with self.state_lock:
-            self.session.asset_decompress_cache.pop(rel_path, None)
-            if target_rel_path != rel_path:
-                self.session.asset_decompress_cache.pop(target_rel_path, None)
-
-        payload: dict[str, Any] = {"rel_path": target_rel_path}
-        if target_rel_path.casefold() != rel_path.casefold():
-            payload["old_rel_path"] = rel_path
+        payload: dict[str, Any] = {"rel_path": result.rel_path}
+        if result.old_rel_path:
+            payload["old_rel_path"] = result.old_rel_path
         self.emit(Base.Event.PROJECT_FILE_UPDATE, payload)
 
-        total = len(new_items_dicts)
-        return {"matched": matched, "new": total - matched, "total": total}
+    def require_loaded_lg_path(self) -> str:
+        """读取当前工程路径；未加载工程时统一抛出同一条错误。"""
 
-    def reset_file(self, rel_path: str) -> None:
-        with self.state_lock:
-            db = self.session.db
-        if db is None:
-            raise RuntimeError("工程未加载")
-
-        items = db.get_items_by_file_path(rel_path)
-        for item in GapTool.iter(items):
-            item["dst"] = ""
-            item["name_dst"] = None
-            item["status"] = Base.ProjectStatus.NONE
-            item["retry_count"] = 0
-
-        if items:
-            db.update_batch(items=items)
-
-        self.item_service.clear_item_cache()
-        self.emit(Base.Event.PROJECT_FILE_UPDATE, {"rel_path": rel_path})
-
-    def delete_file(self, rel_path: str) -> None:
-        with self.state_lock:
-            db = self.session.db
-        if db is None:
-            raise RuntimeError("工程未加载")
-
-        with db.connection() as conn:
-            db.delete_items_by_file_path(rel_path, conn=conn)
-            db.delete_asset(rel_path, conn=conn)
-            conn.commit()
-
-        self.item_service.clear_item_cache()
-        with self.state_lock:
-            self.session.asset_decompress_cache.pop(rel_path, None)
-        self.emit(Base.Event.PROJECT_FILE_UPDATE, {"rel_path": rel_path})
-
-    # ===================== export path =====================
-
-    def timestamp_suffix_context(self) -> AbstractContextManager[None]:
         lg_path = self.get_lg_path()
         if not self.is_loaded() or not lg_path:
             raise RuntimeError("工程未加载，无法获取输出路径")
-        return self.export_path_service.timestamp_suffix_context(lg_path)
+        return lg_path
+
+    def build_workbench_snapshot(self) -> WorkbenchSnapshot:
+        return self.workbench_service.build_snapshot(
+            self.get_all_asset_paths(),
+            self.get_all_item_dicts(),
+        )
+
+    def schedule_add_file(self, file_path: str) -> None:
+        self.schedule_guarded_file_operation(
+            Localizer.get().workbench_progress_adding_file,
+            lambda: self.project_file_service.add_file(file_path),
+            f"Failed to add file: {file_path}",
+        )
+
+    def schedule_replace_file(self, rel_path: str, new_file_path: str) -> None:
+        self.schedule_guarded_file_operation(
+            Localizer.get().toast_processing,
+            lambda: self.project_file_service.replace_file(rel_path, new_file_path),
+            f"Failed to replace file: {rel_path} -> {new_file_path}",
+        )
+
+    def schedule_reset_file(self, rel_path: str) -> None:
+        self.schedule_guarded_file_operation(
+            Localizer.get().workbench_progress_resetting_file,
+            lambda: self.project_file_service.reset_file(rel_path),
+            f"Failed to reset file: {rel_path}",
+        )
+
+    def schedule_delete_file(self, rel_path: str) -> None:
+        self.schedule_guarded_file_operation(
+            Localizer.get().workbench_progress_deleting_file,
+            lambda: self.project_file_service.delete_file(rel_path),
+            f"Failed to delete file: {rel_path}",
+        )
+
+    def add_file(self, file_path: str) -> None:
+        self.emit_project_file_update(self.project_file_service.add_file(file_path))
+
+    def replace_file(self, rel_path: str, new_file_path: str) -> dict[str, int]:
+        result = self.project_file_service.replace_file(rel_path, new_file_path)
+        self.emit_project_file_update(result)
+        return {
+            "matched": result.matched,
+            "new": result.new,
+            "total": result.total,
+        }
+
+    def reset_file(self, rel_path: str) -> None:
+        self.emit_project_file_update(self.project_file_service.reset_file(rel_path))
+
+    def delete_file(self, rel_path: str) -> None:
+        self.emit_project_file_update(self.project_file_service.delete_file(rel_path))
+
+    def timestamp_suffix_context(self) -> AbstractContextManager[None]:
+        return self.export_path_service.timestamp_suffix_context(
+            self.require_loaded_lg_path()
+        )
 
     def export_custom_suffix_context(self, suffix: str) -> AbstractContextManager[None]:
         return self.export_path_service.custom_suffix_context(suffix)
 
     def get_translated_path(self) -> str:
-        lg_path = self.get_lg_path()
-        if not self.is_loaded() or not lg_path:
-            raise RuntimeError("工程未加载，无法获取输出路径")
-        return self.export_path_service.get_translated_path(lg_path)
+        return self.export_path_service.get_translated_path(
+            self.require_loaded_lg_path()
+        )
 
     def get_bilingual_path(self) -> str:
-        lg_path = self.get_lg_path()
-        if not self.is_loaded() or not lg_path:
-            raise RuntimeError("工程未加载，无法获取输出路径")
-        return self.export_path_service.get_bilingual_path(lg_path)
-
-    # ===================== project =====================
+        return self.export_path_service.get_bilingual_path(
+            self.require_loaded_lg_path()
+        )
 
     def get_supported_extensions(self) -> set[str]:
         return set(self.project_service.SUPPORTED_EXTENSIONS)
@@ -1534,5 +1063,5 @@ class DataManager(Base):
                 },
             )
 
-    def get_project_preview(self, lg_path: str) -> dict:
+    def get_project_preview(self, lg_path: str) -> dict[str, Any]:
         return self.project_service.get_project_preview(lg_path)

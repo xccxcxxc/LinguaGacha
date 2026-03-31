@@ -7,9 +7,8 @@ __pycache__
 /*log*
 /*input*
 /*output*
+/*userdata*
 
 *.lg
 /*.xlsx
 /*.json
-/resource/config.json
-/resource/preset/*/user/

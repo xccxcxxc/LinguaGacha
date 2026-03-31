@@ -29,10 +29,10 @@ def create_snapshot(
         pre_replacement_entries=pre_replacement_entries,
         post_replacement_enable=post_replacement_enable,
         post_replacement_entries=post_replacement_entries,
-        custom_prompt_zh_enable=False,
-        custom_prompt_zh="",
-        custom_prompt_en_enable=False,
-        custom_prompt_en="",
+        translation_prompt_enable=False,
+        translation_prompt="",
+        analysis_prompt_enable=False,
+        analysis_prompt="",
         glossary_entries=[],
     )
 
@@ -504,7 +504,12 @@ class TestTextProcessor:
             language=BaseLanguage.Enum.ZH,
         )
 
-        assert captured_path == ["resource/preset/text_preserve/zh/none.json"]
+        assert len(captured_path) == 1
+        assert (
+            captured_path[0]
+            .replace("\\", "/")
+            .endswith("/resource/text_preserve/preset/none.json")
+        )
         assert isinstance(pattern, re.Pattern)
         assert pattern.search("[ABC]") is not None
 
@@ -570,6 +575,11 @@ class TestTextProcessor:
         processor = TextProcessor(Config(), None)
 
         assert processor.inject_name(["hello"], None) == ["hello"]
+
+    def test_inject_name_accepts_first_name_text(self) -> None:
+        processor = TextProcessor(Config(), None)
+
+        assert processor.inject_name(["hello"], "Alice") == ["【Alice】hello"]
 
     def test_extract_name_without_match_keeps_source_and_destination(self) -> None:
         item = Item(name_src="Alice")

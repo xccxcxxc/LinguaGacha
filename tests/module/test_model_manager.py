@@ -3,6 +3,7 @@ import os
 import pytest
 
 from base.BaseLanguage import BaseLanguage
+from base.BasePath import BasePath
 from model.Model import Model
 from model.Model import ModelType
 from module.ModelManager import ModelManager
@@ -25,7 +26,9 @@ def build_model_data(
 @pytest.fixture(autouse=True)
 def reset_singleton(request: pytest.FixtureRequest) -> None:
     ModelManager.reset()
+    BasePath.reset_for_test()
     request.addfinalizer(ModelManager.reset)
+    request.addfinalizer(BasePath.reset_for_test)
 
 
 class TestModelManager:
@@ -34,39 +37,27 @@ class TestModelManager:
         second = ModelManager.get()
         assert first is second
 
-    def test_get_returns_instance_when_inner_check_is_false(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        expected = ModelManager()
+    def test_reset_clears_singleton_instance(self) -> None:
+        first = ModelManager.get()
 
-        class LockThatInjectsInstance:
-            def __enter__(self) -> None:
-                ModelManager._instance = expected
+        ModelManager.reset()
 
-            def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
-                _ = (exc_type, exc, tb)
-                return False
+        second = ModelManager.get()
+        assert first is not second
 
-        monkeypatch.setattr(ModelManager, "_instance", None)
-        monkeypatch.setattr(ModelManager, "_lock", LockThatInjectsInstance())
-
-        manager = ModelManager.get()
-
-        assert manager is expected
-
-    def test_get_preset_dir_uses_app_language(
+    def test_base_path_get_model_preset_dir_uses_app_language(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         manager = ModelManager()
-        monkeypatch.setenv("LINGUAGACHA_APP_DIR", "/tmp/app")
+        BasePath.initialize("/tmp/app", False)
 
         manager.set_app_language(BaseLanguage.Enum.ZH)
-        zh_path = manager.get_preset_dir()
+        zh_path = BasePath.get_model_preset_dir(manager.app_language)
         manager.set_app_language(BaseLanguage.Enum.EN)
-        en_path = manager.get_preset_dir()
+        en_path = BasePath.get_model_preset_dir(manager.app_language)
 
-        assert zh_path.endswith(os.path.join("resource", "preset", "model", "zh"))
-        assert en_path.endswith(os.path.join("resource", "preset", "model", "en"))
+        assert zh_path.replace("\\", "/") == "/tmp/app/resource/preset/model/zh"
+        assert en_path.replace("\\", "/") == "/tmp/app/resource/preset/model/en"
 
     def test_initialize_models_migrates_and_fills_missing_types(
         self, monkeypatch: pytest.MonkeyPatch
@@ -143,7 +134,11 @@ class TestModelManager:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         manager = ModelManager()
-        monkeypatch.setattr(manager, "get_preset_dir", lambda: "/tmp/preset")
+        monkeypatch.setattr(
+            BasePath,
+            "get_model_preset_dir",
+            lambda language: "/tmp/preset",
+        )
 
         def fake_load(path: str) -> dict:
             return {"path": path}
@@ -154,10 +149,17 @@ class TestModelManager:
         openai_template = manager.load_template(ModelType.CUSTOM_OPENAI)
         anthropic_template = manager.load_template(ModelType.CUSTOM_ANTHROPIC)
 
-        assert google_template["path"].endswith(manager.PRESET_CUSTOM_GOOGLE_FILENAME)
-        assert openai_template["path"].endswith(manager.PRESET_CUSTOM_OPENAI_FILENAME)
-        assert anthropic_template["path"].endswith(
-            manager.PRESET_CUSTOM_ANTHROPIC_FILENAME
+        assert google_template["path"] == os.path.join(
+            "/tmp/preset",
+            manager.PRESET_CUSTOM_GOOGLE_FILENAME,
+        )
+        assert openai_template["path"] == os.path.join(
+            "/tmp/preset",
+            manager.PRESET_CUSTOM_OPENAI_FILENAME,
+        )
+        assert anthropic_template["path"] == os.path.join(
+            "/tmp/preset",
+            manager.PRESET_CUSTOM_ANTHROPIC_FILENAME,
         )
 
     def test_get_active_model_falls_back_to_first_when_missing(self) -> None:
@@ -222,7 +224,11 @@ class TestModelManager:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         manager = ModelManager()
-        monkeypatch.setattr(manager, "get_preset_dir", lambda: "/tmp/preset")
+        monkeypatch.setattr(
+            BasePath,
+            "get_model_preset_dir",
+            lambda language: "/tmp/preset",
+        )
         monkeypatch.setattr("module.ModelManager.JSONTool.load_file", lambda _: ["bad"])
 
         assert manager.load_template(ModelType.CUSTOM_OPENAI) == {}
@@ -231,7 +237,11 @@ class TestModelManager:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         manager = ModelManager()
-        monkeypatch.setattr(manager, "get_preset_dir", lambda: "/tmp/preset")
+        monkeypatch.setattr(
+            BasePath,
+            "get_model_preset_dir",
+            lambda language: "/tmp/preset",
+        )
 
         class DummyLogger:
             def warning(self, msg: str, e: Exception) -> None:

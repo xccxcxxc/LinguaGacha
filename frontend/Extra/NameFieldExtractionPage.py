@@ -3,8 +3,8 @@ import threading
 from typing import Any
 from typing import cast
 
-from PySide6.QtCore import QPoint
 from PySide6.QtCore import QModelIndex
+from PySide6.QtCore import QPoint
 from PySide6.QtCore import Qt
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHeaderView
@@ -24,21 +24,20 @@ from module.Config import Config
 from module.Data.DataManager import DataManager
 from module.Engine.Engine import Engine
 from module.Localizer.Localizer import Localizer
-from widget.AppTable import AppTableModelBase
-from widget.AppTable import AppTableView
-from widget.AppTable import ColumnSpec
+from widget.AppTable.AppTableModelBase import AppTableModelBase
+from widget.AppTable.AppTableView import AppTableView
+from widget.AppTable.ColumnSpec import ColumnSpec
 from widget.CommandBarCard import CommandBarCard
 from widget.SearchCard import SearchCard
 from widget.SettingCard import SettingCard
-
 
 # ==================== 图标常量 ====================
 
 ICON_ROW_DELETE: BaseIcon = BaseIcon.TRASH_2  # 表格右键：删除选中行
 ICON_ACTION_EXTRACT: BaseIcon = BaseIcon.FINGERPRINT_PATTERN  # 命令栏：提取姓名字段
-ICON_ACTION_TRANSLATE: BaseIcon = BaseIcon.LANGUAGES  # 命令栏：翻译提取结果
+ICON_ACTION_TRANSLATE: BaseIcon = BaseIcon.SCAN_TEXT  # 命令栏：翻译提取结果
 ICON_ACTION_SEARCH: BaseIcon = BaseIcon.SEARCH  # 命令栏：搜索
-ICON_ACTION_RESET: BaseIcon = BaseIcon.ERASER  # 命令栏：重置/清空
+ICON_ACTION_RESET: BaseIcon = BaseIcon.RECYCLE  # 命令栏：重置/清空
 ICON_ACTION_IMPORT: BaseIcon = BaseIcon.FILE_DOWN  # 命令栏：导入
 
 
@@ -109,7 +108,9 @@ class NameFieldExtractionPage(Base, QWidget):
         self.is_extracting = False
 
     # 头部
-    def add_widget_head(self, parent: QLayout, config: Config, window: FluentWindow) -> None:
+    def add_widget_head(
+        self, parent: QLayout, config: Config, window: FluentWindow
+    ) -> None:
         parent.addWidget(
             SettingCard(
                 title=Localizer.get().name_field_extraction_page,
@@ -119,7 +120,9 @@ class NameFieldExtractionPage(Base, QWidget):
         )
 
     # 主体
-    def add_widget_body(self, parent: QLayout, config: Config, window: FluentWindow) -> None:
+    def add_widget_body(
+        self, parent: QLayout, config: Config, window: FluentWindow
+    ) -> None:
         def delete_row() -> None:
             row = self.table.get_current_source_row()
             if row >= 0 and row < len(self.items):
@@ -150,7 +153,11 @@ class NameFieldExtractionPage(Base, QWidget):
                 width=300,
                 alignment=Qt.AlignmentFlag.AlignCenter,
                 display_getter=lambda row: str(row.get("src", "")),
-                tooltip_getter=lambda row: (f"{Localizer.get().name_field_extraction_context}:\n{row.get('context', '')}" if row.get("context") else ""),
+                tooltip_getter=lambda row: (
+                    f"{Localizer.get().name_field_extraction_context}:\n{row.get('context', '')}"
+                    if row.get("context")
+                    else ""
+                ),
             ),
             ColumnSpec(
                 header=Localizer.get().table_col_translation,
@@ -185,7 +192,9 @@ class NameFieldExtractionPage(Base, QWidget):
         self.refresh_table()
 
     # 底部
-    def add_widget_foot(self, parent: QLayout, config: Config, window: FluentWindow) -> None:
+    def add_widget_foot(
+        self, parent: QLayout, config: Config, window: FluentWindow
+    ) -> None:
         # 创建搜索栏
         self.search_card = SearchCard(self)
         self.search_card.setVisible(False)
@@ -398,7 +407,11 @@ class NameFieldExtractionPage(Base, QWidget):
                     return
 
                 glossary_rules = DataManager.get().get_glossary()
-                glossary_map = {rule.get("src", ""): rule.get("dst", "") for rule in glossary_rules if rule.get("src")}
+                glossary_map = {
+                    rule.get("src", ""): rule.get("dst", "")
+                    for rule in glossary_rules
+                    if rule.get("src")
+                }
 
                 name_contexts: dict[str, list[str]] = {}
                 for item in items:
@@ -431,7 +444,9 @@ class NameFieldExtractionPage(Base, QWidget):
                             "src": name,
                             "dst": dst,
                             "context": best_context,
-                            "status": Localizer.get().proofreading_page_status_processed if dst else Localizer.get().proofreading_page_status_none,
+                            "status": Localizer.get().proofreading_page_status_processed
+                            if dst
+                            else Localizer.get().proofreading_page_status_none,
                         }
                     )
 
@@ -488,7 +503,11 @@ class NameFieldExtractionPage(Base, QWidget):
 
         new_val = str(value).strip() if value is not None else ""
         row_object["dst"] = new_val
-        row_object["status"] = Localizer.get().proofreading_page_status_processed if new_val else Localizer.get().proofreading_page_status_none
+        row_object["status"] = (
+            Localizer.get().proofreading_page_status_processed
+            if new_val
+            else Localizer.get().proofreading_page_status_none
+        )
         return True
 
     def translate_names(self) -> None:
@@ -505,18 +524,24 @@ class NameFieldExtractionPage(Base, QWidget):
 
         config = Config().load()
         if not config.activate_model_id:
-            self.show_toast(Base.ToastType.ERROR, Localizer.get().model_selector_page_fail)
+            self.show_toast(
+                Base.ToastType.ERROR, Localizer.get().model_selector_page_fail
+            )
             return
 
         # 更新状态为 处理中
         for i in indices_to_translate:
-            self.items[i]["status"] = Localizer.get().translation_page_status_translating
+            self.items[i]["status"] = (
+                Localizer.get().translation_page_status_translating
+            )
             self.emit_row_changed(i)
 
         count = len(indices_to_translate)
         # 显示进度 Toast
         self.show_progress_toast(
-            Localizer.get().task_batch_translation_progress.replace("{CURRENT}", "1").replace("{TOTAL}", str(count)),
+            Localizer.get()
+            .task_batch_translation_progress.replace("{CURRENT}", "1")
+            .replace("{TOTAL}", str(count)),
             1,
             count,
         )
@@ -530,7 +555,9 @@ class NameFieldExtractionPage(Base, QWidget):
                 # 更新进度
                 current = idx + 1
                 self.progress_updated.emit(
-                    Localizer.get().task_batch_translation_progress.replace("{CURRENT}", str(current)).replace("{TOTAL}", str(total)),
+                    Localizer.get()
+                    .task_batch_translation_progress.replace("{CURRENT}", str(current))
+                    .replace("{TOTAL}", str(total)),
                     current,
                     total,
                 )
@@ -579,7 +606,11 @@ class NameFieldExtractionPage(Base, QWidget):
                     if not self.items[item_idx]["dst"]:
                         self.items[item_idx]["dst"] = final_name
 
-                    self.items[item_idx]["status"] = Localizer.get().proofreading_page_status_processed if self.items[item_idx]["dst"] else "Format Error"
+                    self.items[item_idx]["status"] = (
+                        Localizer.get().proofreading_page_status_processed
+                        if self.items[item_idx]["dst"]
+                        else "Format Error"
+                    )
                     success_count += 1
                 else:
                     self.items[item_idx]["status"] = "Network Error"
@@ -593,8 +624,14 @@ class NameFieldExtractionPage(Base, QWidget):
             self.emit(
                 Base.Event.TOAST,
                 {
-                    "type": Base.ToastType.SUCCESS if fail_count == 0 else Base.ToastType.WARNING,
-                    "message": Localizer.get().task_batch_translation_success.replace("{SUCCESS}", str(success_count)).replace("{FAILED}", str(fail_count)),
+                    "type": Base.ToastType.SUCCESS
+                    if fail_count == 0
+                    else Base.ToastType.WARNING,
+                    "message": Localizer.get()
+                    .task_batch_translation_success.replace(
+                        "{SUCCESS}", str(success_count)
+                    )
+                    .replace("{FAILED}", str(fail_count)),
                 },
             )
 
@@ -645,7 +682,9 @@ class NameFieldExtractionPage(Base, QWidget):
 
             self.show_toast(Base.ToastType.SUCCESS, Localizer.get().toast_save)
         else:
-            self.show_toast(Base.ToastType.INFO, Localizer.get().task_success)  # 无需更新
+            self.show_toast(
+                Base.ToastType.INFO, Localizer.get().task_success
+            )  # 无需更新
 
     def get_search_columns(self) -> tuple[int, ...]:
         return (0, 1)

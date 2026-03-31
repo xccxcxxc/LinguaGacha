@@ -33,7 +33,6 @@
 
 ## システム要件 🖥️
 - `OpenAI`、`Google`、`Anthropic`、`SakuraLLM` 標準に準拠したAIモデルインターフェースに対応
-- [KeywordGacha](https://github.com/neavo/KeywordGacha) と互換性あり　`👈👈 AIを活用して用語集をワンクリックで生成する次世代ツール`
 
 ## ワークフロー 🛸
 - [リリースページ](https://github.com/neavo/LinguaGacha/releases) からアプリケーションをダウンロード
@@ -63,7 +62,7 @@
 - Feature Description
   - [CLI Mode](https://github.com/neavo/LinguaGacha/wiki/CLIModeEN)
   - [Glossary](https://github.com/neavo/LinguaGacha/wiki/GlossaryEN)　　[Text Preserve](https://github.com/neavo/LinguaGacha/wiki/TextPreserveEN)　　[Text Replacement](https://github.com/neavo/LinguaGacha/wiki/ReplacementEN)
-  - [Incremental Translation](https://github.com/neavo/LinguaGacha/wiki/IncrementalTranslationEN)　　[MTool Optimizer](https://github.com/neavo/LinguaGacha/wiki/MToolOptimizerEN)
+  - [Force Thinking](https://github.com/neavo/LinguaGacha/wiki/ForceThinkingEN)　　[MTool Optimizer](https://github.com/neavo/LinguaGacha/wiki/MToolOptimizerEN)
   - [TS Conversion](https://github.com/neavo/LinguaGacha/wiki/TSConversionEN) [Name-Field Extraction](https://github.com/neavo/LinguaGacha/wiki/NameFieldExtractionEN)
   - You can find more details on each feature in the [Wiki](https://github.com/neavo/LinguaGacha/wiki), and you are welcome to share your experience in the [Discussions](https://github.com/neavo/LinguaGacha/discussions)
 

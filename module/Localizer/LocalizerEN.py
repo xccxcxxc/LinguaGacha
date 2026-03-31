@@ -45,7 +45,6 @@ class LocalizerEN(LocalizerZH):
     confirm: str = "Confirm"
     cancel: str = "Cancel"
     auto: str = "Auto"
-    wiki: str = "Wiki"
     view_more_info: str = "View more info"
     filter: str = "Filter"
     search: str = "Search"
@@ -95,7 +94,10 @@ class LocalizerEN(LocalizerZH):
     search_regex_btn: str = "Regex"
     search_match_info: str = "Item {current} of {total}"
     search_no_result: str = "No results"
+    shortcut_ctrl_f: str = "Ctrl+F"
+    shortcut_ctrl_h: str = "Ctrl+H"
     shortcut_ctrl_s: str = "Ctrl+S"
+    shortcut_enter: str = "Enter"
 
     # 主页面
     app_close_message_box: str = "Are you sure you want to exit the application …?"
@@ -116,6 +118,7 @@ class LocalizerEN(LocalizerZH):
     app_settings_page: str = "App Settings"
     app_model_page: str = "Model"
     app_translation_page: str = "Translation"
+    app_analysis_page: str = "Analysis"
     app_proofreading_page: str = "Proofreading"
     app_workbench_page: str = "Workbench"
     app_expert_settings_page: str = "Expert Settings"
@@ -125,8 +128,8 @@ class LocalizerEN(LocalizerZH):
     app_pre_translation_replacement_page: str = "Pre-Translation"
     app_post_translation_replacement_page: str = "Post-Translation"
     app_custom_prompt_navigation_item: str = "Custom Prompts"
-    app_custom_prompt_zh_page: str = "Chinese Prompts"
-    app_custom_prompt_en_page: str = "English Prompts"
+    app_analysis_prompt_page: str = "Analysis Prompts"
+    app_translation_prompt_page: str = "Translation Prompts"
     app_laboratory_page: str = "Laboratory"
     app_treasure_chest_page: str = "Treasure Chest"
 
@@ -180,35 +183,50 @@ class LocalizerEN(LocalizerZH):
         "\n"
         "Note: mode=custom requires --text_preserve; providing --text_preserve requires mode=custom"
     )
+    log_cli_analysis_export_start: str = "Exporting glossary files …"
+    log_cli_analysis_export_success: str = (
+        "Glossary export completed …"
+        "\n"
+        "Directory: {DIR}"
+        "\n"
+        "JSON: {JSON}"
+        "\n"
+        "XLSX: {XLSX}"
+        "\n"
+        "Glossary Entries: {COUNT}"
+        "\n"
+        "Imported This Run: {IMPORTED}"
+    )
+    log_cli_analysis_export_failed: str = "Glossary export failed …"
 
     # 引擎
     engine_no_items: str = "No items to process were found, please check …"
-    engine_task_done: str = "All data has been processed, task finished …"
+    engine_task_done: str = "Task completed …"
     engine_task_fail: str = "Task failed to complete, some data remains unprocessed. Please check the results …"
     engine_task_stop: str = "Task stopped …"
     engine_task_rule_filter: str = "Rule filtering completed, {COUNT} entries that do not require translation were filtered in total …"
     engine_task_language_filter: str = "Language filtering completed, {COUNT} non-target source language entries were skipped in total …"
     engine_task_scheduler_stop_with_untranslated: str = "Task scheduler stopped, but {COUNT} items remain untranslated (potentially lost due to exceptions)"
-    translator_task_status_info: str = "Split: {SPLIT} | Retry: {RETRY} | Task Length Threshold: {THRESHOLD}"
-    translator_task_force_accept_info: str = " | Forced Accept: {REASON}"
-    translator_simple_log_prefix: str = "Simple Log"
+    engine_task_simple_log_prefix: str = "Simple Log"
+    engine_task_success: str = "Task time {TIME} seconds, {LINES} lines of text, input tokens {PT}, output tokens {CT}"
+    engine_task_response_think: str = "Model Thinking:"
+    engine_task_response_result: str = "Model Response:"
+    translation_task_status_info: str = "Split: {SPLIT} | Retry: {RETRY} | Task Length Threshold: {THRESHOLD}"
+    translation_task_force_accept_info: str = " | Forced Accept: {REASON}"
     engine_api_name: str = "API Name"
     engine_api_model: str = "API Model"
-    engine_response_think: str = "Model Thinking:"
-    engine_response_result: str = "Model Response:"
-    engine_task_success: str = "Task time {TIME} seconds, {LINES} lines of text, input tokens {PT}, output tokens {CT}"
-    api_tester_key: str = "Testing Key:"
-    api_tester_messages: str = "Task Prompts:"
-    api_tester_timeout: str = "Request timed out ({SECONDS}s)"
-    api_tester_result: str = "Tested {COUNT} APIs in total, {SUCCESS} successful, {FAILURE} failed …"
-    api_tester_result_failure: str = "Failed Keys:"
-    api_tester_token_info: str = "Token usage: input {INPUT}, output {OUTPUT}, time {TIME}s"
-    translator_mtool_optimizer_pre_log: str = "MToolOptimizer pre-processing completed, {COUNT} entries containing duplicate clauses were filtered in total …"
-    translator_mtool_optimizer_post_log: str = "MToolOptimizer post-processing completed …"
-    translator_response_check_fail: str = "Data error, will automatically retry, Reason: {REASON}"
-    translator_response_check_fail_all: str = "All translated text quality check failed, will automatically split and retry, Reason: {REASON}"
-    translator_response_check_fail_part: str = "Partial translated text quality check failed, will automatically split and retry, Reason: {REASON}"
-    translator_response_check_fail_force: str = "Translation check failed"
+    api_test_key: str = "Testing Key:"
+    api_test_messages: str = "Task Prompts:"
+    api_test_timeout: str = "Request timed out ({SECONDS}s)"
+    api_test_result: str = "Tested {COUNT} APIs in total, {SUCCESS} successful, {FAILURE} failed …"
+    api_test_result_failure: str = "Failed Keys:"
+    api_test_token_info: str = "Token usage: input {INPUT}, output {OUTPUT}, time {TIME}s"
+    translation_mtool_optimizer_pre_log: str = "MToolOptimizer pre-processing completed, {COUNT} entries containing duplicate clauses were filtered in total …"
+    translation_mtool_optimizer_post_log: str = "MToolOptimizer post-processing completed …"
+    translation_response_check_fail: str = "Data error, will automatically retry, Reason: {REASON}"
+    translation_response_check_fail_all: str = "All translated text quality check failed, will automatically split and retry, Reason: {REASON}"
+    translation_response_check_fail_part: str = "Partial translated text quality check failed, will automatically split and retry, Reason: {REASON}"
+    translation_response_check_fail_force: str = "Translation check failed"
     response_checker_fail_data: str = "Data Structure Error"
     response_checker_fail_timeout: str = "Network Request Timeout"
     response_checker_fail_line_count: str = "Line Count Mismatch"
@@ -360,7 +378,7 @@ class LocalizerEN(LocalizerZH):
     project_info_translated: str = "Translated: {COUNT}"
     project_info_total: str = "Total: {COUNT}"
     project_recent_empty: str = "No recent projects"
-    project_file_filter_lg: str = "LinguaGacha Project (*.lg)"
+    project_file_filter_lg: str = "Project File (*.lg)"
     project_error_read_preview: str = "Failed to read project preview: {ERROR}"
 
     # 翻译
@@ -389,6 +407,36 @@ class LocalizerEN(LocalizerZH):
     translation_page_alert_reset_all: str = "Confirm to reset all items? You can continue translating after reset …?"
     translation_page_reset_tooltip: str = "Click to choose resetting failed items or all items"
     translation_page_timer: str = "Waiting time before delayed startup"
+
+    # 分析
+    analysis_page_status_idle: str = "Idle"
+    analysis_page_status_analyzing: str = "Analyzing"
+    analysis_page_status_stopping: str = "Stopping"
+    analysis_page_indeterminate_stopping: str = "Stopping analysis task …"
+    analysis_page_card_time: str = "Elapsed Time"
+    analysis_page_card_remaining_time: str = "Remaining Time"
+    analysis_page_card_time_tooltip: str = "Click to toggle Remaining/Elapsed"
+    analysis_page_card_line_processed: str = "Analyzed"
+    analysis_page_card_line_error: str = "Failed"
+    analysis_page_card_line_error_tooltip: str = "Usually caused by network failure or api issues"
+    analysis_page_card_remaining_line: str = "Remaining Lines"
+    analysis_page_card_speed: str = "Average Speed"
+    analysis_page_card_token_input: str = "Input Tokens"
+    analysis_page_card_token_output: str = "Output Tokens"
+    analysis_page_card_token_tooltip: str = "Click to toggle Input/Output"
+    analysis_page_card_task: str = "Real Time Tasks"
+    analysis_page_alert_pause: str = "Stopped analysis tasks can be resumed at any time. Confirm to stop the task …?"
+    analysis_page_continue: str = "Continue"
+    analysis_page_reset_failed: str = "Reset Failed Items"
+    analysis_page_reset_all: str = "Reset All Progress"
+    analysis_page_action_import: str = "Import To Glossary"
+    analysis_page_import_success: str = "Import succeeded, added {COUNT} entries …"
+    analysis_page_alert_reset_failed: str = "Confirm to reset failed items? You can continue analyzing after reset …?"
+    analysis_page_alert_reset_all: str = "Confirm to reset all analysis progress? The whole project text will be analyzed again after reset …?"
+    analysis_page_reset_tooltip: str = "Click to choose resetting failed items or all analysis progress"
+    analysis_task_source_texts: str = "Analysis Input:"
+    analysis_task_extracted_terms: str = "Extracted Terms:"
+    analysis_task_no_terms: str = "No terms extracted"
 
     # 校对
     proofreading_page_filter: str = "Filter"
@@ -442,11 +490,9 @@ class LocalizerEN(LocalizerZH):
     proofreading_page_indeterminate_saving: str = "Saving data …"
     proofreading_page_retranslate: str = "Retranslate"
     proofreading_page_retranslate_confirm: str = "Retranslate this entry?"
-    proofreading_page_batch_retranslate: str = "Retranslate selected"
     proofreading_page_batch_retranslate_confirm: str = "Retranslate all {COUNT} entries?"
     proofreading_page_reset_translation: str = "Reset Translation"
     proofreading_page_reset_translation_confirm: str = "Reset translation for this entry?"
-    proofreading_page_batch_reset_translation: str = "Reset Selected"
     proofreading_page_batch_reset_translation_confirm: str = (
         "Reset translation for all {COUNT} entries?"
     )
@@ -463,16 +509,16 @@ class LocalizerEN(LocalizerZH):
     workbench_col_line_count: str = "Lines"
     workbench_col_actions: str = "Actions"
     workbench_btn_add_file: str = "Add File"
-    workbench_btn_update: str = "Update"
-    workbench_btn_reset: str = "Reset"
+    workbench_btn_replace: str = "Replace File"
+    workbench_btn_reset: str = "Reset Translation"
     workbench_btn_delete: str = "Delete"
     workbench_msg_delete_confirm: str = "Delete this file and all its translation items …?"
     workbench_msg_reset_confirm: str = "Reset translation status for this file …?"
-    workbench_msg_file_exists: str = "File already exists, please use Update"
+    workbench_msg_file_exists: str = "File already exists …"
     workbench_msg_unsupported_format: str = "Unsupported file format"
-    workbench_msg_update_format_mismatch: str = "File format mismatch, cannot update"
-    workbench_msg_update_confirm: str = "Update the current file with the selected file, current data will be preserved as possible"
-    workbench_msg_update_name_conflict: str = "{NAME} already exists …"
+    workbench_msg_replace_format_mismatch: str = "File format mismatch, cannot replace"
+    workbench_msg_replace_confirm: str = "Current translations will be preserved as much as possible"
+    workbench_msg_replace_name_conflict: str = "File already exists …"
     workbench_fmt_subtitle_file: str = "Subtitle File"
     workbench_fmt_text_file: str = "Plain Text"
     workbench_fmt_ebook: str = "EPUB"
@@ -484,10 +530,9 @@ class LocalizerEN(LocalizerZH):
     workbench_fmt_trans_export: str = "Translator++ XLSX"
     workbench_fmt_wolf: str = "WOLF Official Tool XLSX"
     workbench_update_stat: str = "Added {NEW}, kept {MATCHED} …"
-    workbench_progress_adding_file: str = "Adding file ..."
-    workbench_progress_updating_file: str = "Updating file ..."
-    workbench_progress_resetting_file: str = "Resetting file ..."
-    workbench_progress_deleting_file: str = "Deleting file ..."
+    workbench_progress_adding_file: str = "Adding file …"
+    workbench_progress_resetting_file: str = "Resetting file …"
+    workbench_progress_deleting_file: str = "Deleting file …"
     workbench_msg_file_not_found: str = "File not found"
 
     # 基础设置
@@ -566,6 +611,7 @@ class LocalizerEN(LocalizerZH):
     quality_export_toast: str = "Data exported …"
     quality_merge_duplication: str = "Merged duplicate entries …"
     quality_delete_confirm: str = "Confirm deleting {COUNT} item(s)?"
+    quality_query: str = "Query"
     quality_preset: str = "Preset"
     quality_select_file_type: str = "Supported Formats (*.json *.xlsx)"
     quality_delete_row: str = "Delete Row"
@@ -595,7 +641,6 @@ class LocalizerEN(LocalizerZH):
     # 术语表
     glossary_page_head_content: str = "By building a glossary in the prompt to guide model translation, unified translation and correction of personal pronouns can be achieved"
     glossary_page_table_row_04: str = "Description"
-    glossary_page_kg: str = "One-Click Tools"
 
     # 文本保护
     text_preserve_page_head_content: str = (
@@ -614,38 +659,30 @@ class LocalizerEN(LocalizerZH):
 
     # 译前替换
     pre_translation_replacement_page_head_title: str = "Pre-translation Replacement"
-    pre_translation_replacement_page_head_content: str = (
-        "Before translation, matched parts of the original text will be replaced by specified text, processed in top-down order"
-        "<br>"
-        "For <font color='darkgoldenrod'><b>RPGMaker MV/MZ</b></font> engine games:"
-        "<br>"
-        "• Importing <font color='darkgoldenrod'><b>actors.json</b></font> from <font color='darkgoldenrod'><b>data</b></font> or <font color='darkgoldenrod'><b>www\\data</b></font> in the game directory can improve translation quality"
-        "<br>"
-        "• Special handling is needed for games with custom names. Click the bottom-right button to see <font color='darkgoldenrod'><b>Wiki</b></font> instructions"
-    )
+    pre_translation_replacement_page_head_content: str = "Before translation, matched parts of the original text will be replaced by specified text, processed in top-down order"
 
     # 译后替换
     post_translation_replacement_page_head_title: str = "Post-translation Replacement"
-    post_translation_replacement_page_head_content: str = "After translation is completed, replace the matched parts in the translated text with the specified text, the execution order is from top to bottom"
+    post_translation_replacement_page_head_content: str = "After translation, matched parts of the original text will be replaced by specified text, processed in top-down order"
 
-    # 自定义提示词 - 中文
-    custom_prompt_zh_page_head: str = "Custom Chinese Prompts (SakuraLLM model not supported)"
-    custom_prompt_zh_page_head_desc: str = (
+    # 自定义提示词 - 翻译
+    translation_prompt_page_head: str = "Custom Translation Prompts (SakuraLLM model not supported)"
+    translation_prompt_page_head_desc: str = (
         "Add extra translation requirements such as story settings and writing styles via custom prompts"
         "<br>"
         "Note: The prefix and suffix are fixed and cannot be modified"
         "<br>"
-        "The custom prompts on this page will only be used when the <font color='darkgoldenrod'><b>translation language is set to Chinese</b></font>"
+        "The content on this page is only used in translation tasks after this page is enabled"
     )
 
-    # 自定义提示词 - 英文
-    custom_prompt_en_page_head: str = "Custom English Prompts (SakuraLLM model not supported)"
-    custom_prompt_en_page_head_desc: str = (
-        "Add extra translation requirements such as story settings and writing styles via custom prompts"
+    # 自定义提示词 - 分析
+    analysis_prompt_page_head: str = "Custom Analysis Prompts"
+    analysis_prompt_page_head_desc: str = (
+        "Adjust glossary analysis scope and output requirements through custom prompts"
         "<br>"
         "Note: The prefix and suffix are fixed and cannot be modified"
         "<br>"
-        "The custom prompts on this page will only be used when the <font color='darkgoldenrod'><b>translation language is set to non-Chinese</b></font>"
+        "The content on this page is only used in analysis tasks after this page is enabled"
     )
 
     # 自定义提示词 - 导入导出
@@ -674,14 +711,6 @@ class LocalizerEN(LocalizerZH):
         "<br>"
         "◈ When functioning normally, model reasoning output will be visible in the translation logs"
     )
-    laboratory_page_auto_glossary_enable: str = "Auto Complete Glossary"
-    laboratory_page_auto_glossary_enable_desc: str = (
-        "Automatically supplement the glossary while translating, disabled by default, and does not support SakuraLLM"
-        "<br>"
-        "◈ Intended only for filling gaps; it may generate <font color='darkgoldenrod'><b>incorrect or inappropriate</b></font> data"
-        "<br>"
-        "◈ Recommended to enable this feature on top of a complete, filtered glossary obtained using <font color='darkgoldenrod'><b>KeywordGacha</b></font>"
-    )
 
     # 百宝箱
     tool_box_page_name_field_extraction_desc: str = (
@@ -696,7 +725,7 @@ class LocalizerEN(LocalizerZH):
     name_field_extraction_page_desc: str = (
         "Extract character name fields from all eligible files in the <font color='darkgoldenrod'><b>input folder</b></font> and automatically generate corresponding glossary data"
         "<br>"
-        "Please note: This function <font color='darkgoldenrod'><b>cannot extract terms from the main text</b></font>, and cannot replace the <font color='darkgoldenrod'><b>KeywordGacha</b></font> tool"
+        "Please note: This function <font color='darkgoldenrod'><b>cannot extract terms from the main text</b></font>"
         "<br>"
         "Supported formats:"
         "<br>"

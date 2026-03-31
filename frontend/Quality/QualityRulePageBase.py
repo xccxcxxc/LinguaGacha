@@ -3,15 +3,16 @@ import threading
 from pathlib import Path
 from typing import Any
 from typing import Callable
+from typing import TypeVar
 from typing import cast
 
 from PySide6.QtCore import QPoint
 from PySide6.QtCore import Qt
 from PySide6.QtCore import QTimer
-from PySide6.QtCore import QUrl
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QDesktopServices
 from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QShortcut
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import QAbstractItemView
 from PySide6.QtWidgets import QApplication
@@ -24,14 +25,18 @@ from PySide6.QtWidgets import QWidget
 from qfluentwidgets import Action
 from qfluentwidgets import FluentWindow
 from qfluentwidgets import MenuAnimationType
+from qfluentwidgets import MessageBox
 from qfluentwidgets import RoundMenu
-from qfluentwidgets import TransparentPushButton
+from qfluentwidgets import ToolTipFilter
+from qfluentwidgets import ToolTipPosition
 from qfluentwidgets import setCustomStyleSheet
+from qfluentwidgets import qconfig
 from qfluentwidgets.components.widgets.command_bar import CommandButton
 
 from base.Base import Base
 from base.BaseIcon import BaseIcon
 from base.LogManager import LogManager
+from frontend.Quality.QualityRuleEditPanelBase import QualityRuleEditPanelBase
 from frontend.Quality.QualityRulePresetManager import QualityRulePresetManager
 from frontend.Utils.StatusColumnIconStrip import StatusColumnIconStrip
 from module.Config import Config
@@ -40,13 +45,10 @@ from module.Localizer.Localizer import Localizer
 from module.QualityRule.QualityRuleIO import QualityRuleIO
 from module.QualityRule.QualityRuleMerger import QualityRuleMerger
 from module.QualityRule.QualityRuleReorder import QualityRuleReorder
-from module.QualityRule.QualityRuleStatistics import RuleStatInput
-from module.QualityRule.QualityRuleStatistics import RuleStatResult
-from module.QualityRule.QualityRuleStatistics import count_rule_occurrences
-from module.Utils.GapTool import GapTool
-from widget.AppTable import AppTableModelBase
-from widget.AppTable import AppTableView
-from widget.AppTable import ColumnSpec
+from module.QualityRule.QualityRuleStatistics import QualityRuleStatistics
+from widget.AppTable.AppTableModelBase import AppTableModelBase
+from widget.AppTable.AppTableView import AppTableView
+from widget.AppTable.ColumnSpec import ColumnSpec
 from widget.CommandBarCard import CommandBarCard
 from widget.SearchCard import SearchCard
 
@@ -56,7 +58,6 @@ ICON_ACTION_IMPORT: BaseIcon = BaseIcon.FILE_DOWN  # 命令栏：导入规则
 ICON_ACTION_EXPORT: BaseIcon = BaseIcon.FILE_UP  # 命令栏：导出规则
 ICON_ACTION_SEARCH: BaseIcon = BaseIcon.SEARCH  # 命令栏：搜索
 ICON_ACTION_PRESET: BaseIcon = BaseIcon.FOLDER_OPEN  # 命令栏：预设菜单
-ICON_ACTION_WIKI: BaseIcon = BaseIcon.CIRCLE_QUESTION_MARK  # 命令栏：打开 Wiki
 ICON_ACTION_STATISTICS: BaseIcon = BaseIcon.CHART_BAR  # 命令栏：规则统计
 ICON_ACTION_REORDER: BaseIcon = BaseIcon.ARROW_DOWN_UP  # 右键菜单：排序
 ICON_ACTION_MOVE_UP: BaseIcon = BaseIcon.CHEVRON_UP  # 右键菜单：上移
@@ -65,6 +66,8 @@ ICON_ACTION_MOVE_TOP: BaseIcon = BaseIcon.CHEVRON_FIRST  # 右键菜单：置顶
 ICON_ACTION_MOVE_BOTTOM: BaseIcon = BaseIcon.CHEVRON_LAST  # 右键菜单：置底
 ICON_STAT_HIT: BaseIcon = BaseIcon.CIRCLE_CHECK  # 统计列：命中
 ICON_STAT_ALERT: BaseIcon = BaseIcon.TRIANGLE_ALERT  # 统计列：告警（包含关系）
+
+EditPanelT = TypeVar("EditPanelT", bound=QualityRuleEditPanelBase)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -97,14 +100,16 @@ class QualityRulePageBase(Base, QWidget):
     STATISTICS_COLUMN_WIDTH: int = 70
     STATISTICS_ICON_SIZE: int = 16
     STATISTICS_ICON_SPACING: int = 4
-    # “仅可翻译条目”口径：排除结构跳过状态，保留翻译主流程状态。
-    STATISTICS_COUNTED_STATUSES: set[Base.ProjectStatus] = {
-        Base.ProjectStatus.NONE,
-        Base.ProjectStatus.PROCESSING,
-        Base.ProjectStatus.PROCESSED,
-        Base.ProjectStatus.PROCESSED_IN_PAST,
-        Base.ProjectStatus.ERROR,
-    }
+    TERMINAL_STATISTICS_INVALIDATION_SUB_EVENTS: tuple[Base.SubEvent, ...] = (
+        Base.SubEvent.DONE,
+        Base.SubEvent.ERROR,
+    )
+    ANALYSIS_TASK_STATISTICS_INVALIDATION_SUB_EVENTS: tuple[Base.SubEvent, ...] = (
+        Base.SubEvent.REQUEST,
+        Base.SubEvent.RUN,
+        Base.SubEvent.DONE,
+        Base.SubEvent.ERROR,
+    )
 
     statistics_done = Signal(
         int, object
@@ -134,10 +139,11 @@ class QualityRulePageBase(Base, QWidget):
         self.statistics_running: bool = False
         self.statistics_token: int = 0
         self.statistics_column_index: int = -1
-        self.statistics_results: dict[str, RuleStatResult] = {}
+        self.statistics_results: dict[str, QualityRuleStatistics.RuleStatResult] = {}
         self.statistics_subset_parents: dict[str, tuple[str, ...]] = {}
         self.statistics_icon_cache: StatusColumnIconStrip.IconStripPixmapCache = {}
         self.statistics_button: CommandButton | None = None
+        self.search_button: CommandButton | None = None
         self.statistics_done.connect(self.on_statistics_done)
 
         # 主容器
@@ -150,6 +156,10 @@ class QualityRulePageBase(Base, QWidget):
         self.subscribe(Base.Event.TRANSLATION_TASK, self.on_translation_task)
         self.subscribe(Base.Event.TRANSLATION_RESET_ALL, self.on_translation_reset)
         self.subscribe(Base.Event.TRANSLATION_RESET_FAILED, self.on_translation_reset)
+        self.subscribe(Base.Event.ANALYSIS_TASK, self.on_analysis_task)
+        self.subscribe(Base.Event.ANALYSIS_REQUEST_STOP, self.on_analysis_task)
+        self.subscribe(Base.Event.ANALYSIS_RESET_ALL, self.on_analysis_reset)
+        self.subscribe(Base.Event.ANALYSIS_RESET_FAILED, self.on_analysis_reset)
 
     # ==================== 子类需要实现的最小接口 ====================
 
@@ -173,6 +183,16 @@ class QualityRulePageBase(Base, QWidget):
 
     def create_empty_entry(self) -> dict[str, Any]:
         raise NotImplementedError
+
+    def build_proofreading_lookup(
+        self, entry: dict[str, Any]
+    ) -> tuple[str, bool] | None:
+        """把当前规则转换成校对页可直接消费的查询参数。"""
+
+        keyword = str(entry.get("src", "")).strip()
+        if not keyword:
+            return None
+        return keyword, False
 
     def get_merge_rule_type(self) -> QualityRuleMerger.RuleType:
         """返回当前页面对应的规则类型（用于判重 key 与字段级合并）。
@@ -215,7 +235,7 @@ class QualityRulePageBase(Base, QWidget):
 
     def build_statistics_inputs(
         self, entries: list[dict[str, Any]] | None = None
-    ) -> list[RuleStatInput]:
+    ) -> list[QualityRuleStatistics.RuleStatInput]:
         """子类可覆盖：构建当前页面的规则统计输入。"""
         del entries
 
@@ -225,6 +245,26 @@ class QualityRulePageBase(Base, QWidget):
         """子类可覆盖：为统计结果映射提供稳定 key。"""
 
         return self.get_entry_key(entry)
+
+    def bind_edit_panel_actions(self, panel: EditPanelT) -> EditPanelT:
+        """绑定规则编辑面板的通用动作，减少页面侧样板代码。"""
+
+        panel.add_requested.connect(
+            lambda: self.run_with_unsaved_guard(self.add_entry_after_current)
+        )
+        panel.save_requested.connect(self.save_current_entry)
+        panel.delete_requested.connect(self.delete_current_entry)
+        panel.query_requested.connect(self.query_current_entry)
+        return panel
+
+    def disconnect_theme_changed_signal(self, callback: Callable[[], None]) -> None:
+        """统一断开主题切换信号，避免页面侧重复写相同兜底。"""
+
+        try:
+            qconfig.themeChanged.disconnect(callback)
+        except TypeError, RuntimeError:
+            # Qt 对象销毁或重复断开连接时可能抛异常，可忽略。
+            pass
 
     # ==================== UI 组装（供子类调用） ====================
 
@@ -430,18 +470,207 @@ class QualityRulePageBase(Base, QWidget):
     def on_translation_task(self, event: Base.Event, data: dict) -> None:
         del event
         sub_event = data.get("sub_event")
-        if sub_event in (Base.SubEvent.DONE, Base.SubEvent.ERROR):
+        if self.should_invalidate_statistics_for_terminal_sub_event(sub_event):
             self.invalidate_statistics()
 
     def on_translation_reset(self, event: Base.Event, data: dict) -> None:
         del event
         sub_event = data.get("sub_event")
-        if sub_event in (Base.SubEvent.DONE, Base.SubEvent.ERROR):
+        if self.should_invalidate_statistics_for_terminal_sub_event(sub_event):
+            self.invalidate_statistics()
+
+    def on_analysis_task(self, event: Base.Event, data: dict) -> None:
+        del event
+        sub_event = data.get("sub_event")
+        if self.should_invalidate_statistics_for_analysis_task(sub_event):
+            self.invalidate_statistics()
+
+    def on_analysis_reset(self, event: Base.Event, data: dict) -> None:
+        del event
+        sub_event = data.get("sub_event")
+        if self.should_invalidate_statistics_for_terminal_sub_event(sub_event):
             self.invalidate_statistics()
 
     def on_project_unloaded_ui(self) -> None:
         """子类可覆盖：卸载工程时刷新头部 UI。"""
         return
+
+    def emit_toast_message(self, toast_type: Base.ToastType, message: str) -> None:
+        """统一发出 Toast，避免每个分支重复拼装 payload。"""
+
+        self.emit(
+            Base.Event.TOAST,
+            {
+                "type": toast_type,
+                "message": message,
+            },
+        )
+
+    def emit_success_toast(self, message: str) -> None:
+        """成功提示统一收口，主流程只保留业务语义。"""
+
+        self.emit_toast_message(Base.ToastType.SUCCESS, message)
+
+    def emit_warning_toast(self, message: str) -> None:
+        """警告提示统一收口，减少重复 if-else 嵌套。"""
+
+        self.emit_toast_message(Base.ToastType.WARNING, message)
+
+    def emit_error_toast(self, message: str) -> None:
+        """错误提示统一收口，保证失败反馈口径一致。"""
+
+        self.emit_toast_message(Base.ToastType.ERROR, message)
+
+    def persist_entries_with_feedback(self, *, cleanup_empty_entries: bool) -> bool:
+        """统一写回当前 entries，并把失败日志与提示收敛到一个入口。"""
+
+        if cleanup_empty_entries:
+            self.cleanup_empty_entries()
+
+        try:
+            self.save_entries(self.entries)
+        except Exception as e:
+            LogManager.get().error(Localizer.get().task_failed, e)
+            self.emit_error_toast(Localizer.get().task_failed)
+            return False
+
+        # 避免自身保存触发的 QUALITY_RULE_UPDATE 重载。
+        self.ignore_next_quality_rule_update = True
+        return True
+
+    def run_reload_if_pending(self) -> None:
+        """保存成功后补跑挂起 reload，避免编辑态期间的刷新请求丢失。"""
+
+        if self.reload_pending:
+            self.reload_entries()
+
+    def find_entry_row_by_src(self, src: str) -> int:
+        """按 src 查找行号，统一选中恢复口径。"""
+
+        normalized_src = str(src).strip()
+        if normalized_src == "":
+            return -1
+
+        for index, entry in enumerate(self.entries):
+            current_src = str(entry.get("src", "")).strip()
+            if current_src == normalized_src:
+                return index
+        return -1
+
+    def restore_selection_by_anchor(
+        self,
+        *,
+        anchor_src: str,
+        anchor_index: int,
+        fallback_to_first: bool,
+        clear_when_empty: bool,
+    ) -> None:
+        """统一按 src/索引恢复选中，避免多个入口各自维护一套分支。"""
+
+        if not self.entries:
+            if clear_when_empty:
+                self.apply_selection(-1)
+            return
+
+        matched_row = self.find_entry_row_by_src(anchor_src)
+        if matched_row >= 0:
+            self.select_row(matched_row)
+            return
+
+        if anchor_index >= 0:
+            self.select_row(min(anchor_index, len(self.entries) - 1))
+            return
+
+        if fallback_to_first:
+            self.select_row(0)
+            return
+
+        self.select_row(-1)
+
+    def refresh_table_and_restore_row(
+        self,
+        preferred_row: int,
+        *,
+        fallback_to_first: bool,
+    ) -> None:
+        """整表刷新后按同一规则恢复选中，避免成功收尾重复展开。"""
+
+        self.refresh_table()
+        if not self.entries:
+            self.apply_selection(-1)
+            return
+
+        if 0 <= preferred_row < len(self.entries):
+            self.select_row(preferred_row)
+            return
+
+        if fallback_to_first:
+            self.select_row(0)
+            return
+
+        self.select_row(-1)
+
+    def bind_current_entry_if_valid(self) -> None:
+        """局部刷新后重新绑定右侧编辑区，确保表格与编辑面板口径一致。"""
+
+        if self.current_index < 0 or self.current_index >= len(self.entries):
+            return
+        self.edit_panel.bind_entry(
+            self.entries[self.current_index], self.current_index + 1
+        )
+
+    def refresh_current_row_after_save(self) -> None:
+        """普通更新路径只刷新当前行，避免无意义整表重绘。"""
+
+        if self.current_index < 0 or self.current_index >= len(self.entries):
+            self.table.clearSelection()
+            self.apply_selection(-1)
+            return
+
+        self.refresh_table_rows([self.current_index])
+        self.block_selection_change = True
+        view_row = self.map_source_row_to_view_row(self.current_index)
+        if view_row >= 0:
+            self.table.selectRow(view_row)
+        self.block_selection_change = False
+        self.bind_current_entry_if_valid()
+
+    def clear_pending_guard_state(
+        self,
+    ) -> tuple[Callable[[], None] | None, Callable[[], None] | None]:
+        """统一清理 pending guard 状态，避免失败分支残留旧动作。"""
+
+        action = self.pending_action
+        revert = self.pending_revert
+        self.pending_action = None
+        self.pending_revert = None
+        return action, revert
+
+    def cancel_pending_guard(self) -> None:
+        """保存失败或校验失败时统一回滚挂起动作。"""
+
+        _action, revert = self.clear_pending_guard_state()
+        if callable(revert):
+            revert()
+
+    def run_pending_guard_action(self) -> None:
+        """保存成功后继续执行被未保存保护挂起的动作。"""
+
+        action, _revert = self.clear_pending_guard_state()
+        if callable(action):
+            action()
+
+    def should_invalidate_statistics_for_terminal_sub_event(
+        self, sub_event: object
+    ) -> bool:
+        """翻译与 reset 事件只在终态失效统计，避免无意义重复刷新。"""
+
+        return sub_event in self.TERMINAL_STATISTICS_INVALIDATION_SUB_EVENTS
+
+    def should_invalidate_statistics_for_analysis_task(self, sub_event: object) -> bool:
+        """分析任务在请求、运行与终态都会影响统计口径。"""
+
+        return sub_event in self.ANALYSIS_TASK_STATISTICS_INVALIDATION_SUB_EVENTS
 
     def reload_entries(self) -> None:
         # reload 过程中尽量保持当前选中行不跳回首行：
@@ -458,21 +687,12 @@ class QualityRulePageBase(Base, QWidget):
         self.on_entries_reloaded()
         self.reload_pending = False
 
-        if not self.entries:
-            self.apply_selection(-1)
-            return
-
-        if anchor_src:
-            for i, v in enumerate(self.entries):
-                if str(v.get("src", "")).strip() == anchor_src:
-                    self.select_row(i)
-                    return
-
-        if anchor_index >= 0:
-            self.select_row(min(anchor_index, len(self.entries) - 1))
-            return
-
-        self.select_row(0)
+        self.restore_selection_by_anchor(
+            anchor_src=anchor_src,
+            anchor_index=anchor_index,
+            fallback_to_first=True,
+            clear_when_empty=True,
+        )
 
     # ==================== 列表渲染/选择 ====================
 
@@ -565,40 +785,15 @@ class QualityRulePageBase(Base, QWidget):
                 next_index = -1
         self.current_index = next_index
 
-        try:
-            self.cleanup_empty_entries()
-            self.save_entries(self.entries)
-            # 避免自身保存触发的 QUALITY_RULE_UPDATE 重载。
-            self.ignore_next_quality_rule_update = True
-        except Exception as e:
-            LogManager.get().error(Localizer.get().task_failed, e)
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.ERROR,
-                    "message": Localizer.get().task_failed,
-                },
-            )
+        if not self.persist_entries_with_feedback(cleanup_empty_entries=True):
             return
 
-        self.refresh_table()
-        if self.entries:
-            if self.current_index < 0 or self.current_index >= len(self.entries):
-                self.current_index = 0
-            self.select_row(self.current_index)
-        else:
-            self.apply_selection(-1)
-
-        self.emit(
-            Base.Event.TOAST,
-            {
-                "type": Base.ToastType.SUCCESS,
-                "message": Localizer.get().toast_save,
-            },
+        self.refresh_table_and_restore_row(
+            self.current_index,
+            fallback_to_first=True,
         )
-
-        if self.reload_pending:
-            self.reload_entries()
+        self.emit_success_toast(Localizer.get().toast_save)
+        self.run_reload_if_pending()
 
     def reorder_selected_rows_by_operation(
         self,
@@ -791,19 +986,7 @@ class QualityRulePageBase(Base, QWidget):
         if not changed_rows:
             return
 
-        try:
-            self.save_entries(self.entries)
-            # 避免自身保存触发的 QUALITY_RULE_UPDATE 重载。
-            self.ignore_next_quality_rule_update = True
-        except Exception as e:
-            LogManager.get().error(Localizer.get().task_failed, e)
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.ERROR,
-                    "message": Localizer.get().task_failed,
-                },
-            )
+        if not self.persist_entries_with_feedback(cleanup_empty_entries=False):
             return
 
         self.refresh_table_rows(changed_rows)
@@ -811,20 +994,10 @@ class QualityRulePageBase(Base, QWidget):
         if self.current_index in changed_rows and 0 <= self.current_index < len(
             self.entries
         ):
-            self.edit_panel.bind_entry(
-                self.entries[self.current_index], self.current_index + 1
-            )
+            self.bind_current_entry_if_valid()
 
-        self.emit(
-            Base.Event.TOAST,
-            {
-                "type": Base.ToastType.SUCCESS,
-                "message": Localizer.get().toast_save,
-            },
-        )
-
-        if self.reload_pending:
-            self.reload_entries()
+        self.emit_success_toast(Localizer.get().toast_save)
+        self.run_reload_if_pending()
 
     def delete_entries_by_rows_common(
         self,
@@ -853,23 +1026,8 @@ class QualityRulePageBase(Base, QWidget):
 
         self.current_index = -1
 
-        try:
-            self.cleanup_empty_entries()
-            self.save_entries(self.entries)
-            # 避免自身保存触发的 QUALITY_RULE_UPDATE 重载。
-            self.ignore_next_quality_rule_update = True
-        except Exception as e:
-            LogManager.get().error(Localizer.get().task_failed, e)
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.ERROR,
-                    "message": Localizer.get().task_failed,
-                },
-            )
+        if not self.persist_entries_with_feedback(cleanup_empty_entries=True):
             return False
-
-        self.refresh_table()
 
         if self.entries:
             if current_index >= 0 and current_index not in deleted_set:
@@ -879,23 +1037,30 @@ class QualityRulePageBase(Base, QWidget):
                 next_index = min(deleted_set)
             if next_index >= len(self.entries):
                 next_index = len(self.entries) - 1
-            self.select_row(next_index)
         else:
-            self.apply_selection(-1)
+            next_index = -1
 
-            if emit_success_toast_when_empty:
-                self.emit(
-                    Base.Event.TOAST,
-                    {
-                        "type": Base.ToastType.SUCCESS,
-                        "message": Localizer.get().toast_save,
-                    },
-                )
+        self.refresh_table_and_restore_row(
+            next_index,
+            fallback_to_first=False,
+        )
 
-        if self.reload_pending:
-            self.reload_entries()
-
+        if not self.entries and emit_success_toast_when_empty:
+            self.emit_success_toast(Localizer.get().toast_save)
+        self.run_reload_if_pending()
         return True
+
+    def confirm_delete_entries(self, count: int) -> bool:
+        """统一的删除确认框，避免各规则页重复维护相同文案与按钮。"""
+
+        message = Localizer.get().quality_delete_confirm.replace("{COUNT}", str(count))
+        message_box = MessageBox(Localizer.get().confirm, message, self.main_window)
+        message_box.yesButton.setText(Localizer.get().confirm)
+        message_box.cancelButton.setText(Localizer.get().cancel)
+        return bool(message_box.exec())
+
+    def delete_selected_entries(self) -> None:
+        self.delete_entries_by_rows(self.get_selected_entry_rows())
 
     def refresh_statistics_column(self) -> None:
         if not hasattr(self, "table_model"):
@@ -923,48 +1088,19 @@ class QualityRulePageBase(Base, QWidget):
             ],
         )
 
-    def normalize_item_text(self, value: Any) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, str):
-            return value
-        return str(value)
-
-    def normalize_project_status(self, value: Any) -> Base.ProjectStatus:
-        if isinstance(value, Base.ProjectStatus):
-            return value
-        if isinstance(value, str):
-            try:
-                return Base.ProjectStatus(value)
-            except ValueError:
-                return Base.ProjectStatus.NONE
-        return Base.ProjectStatus.NONE
-
     def collect_statistics_texts(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """提取统计使用的 src/dst 文本快照。
 
         口径固定为“仅可翻译条目”，这样统计结果与翻译主流程一致。
         """
-
-        item_dicts = DataManager.get().get_all_item_dicts()
-        src_texts: list[str] = []
-        dst_texts: list[str] = []
-        for item in item_dicts:
-            if not isinstance(item, dict):
-                continue
-            status = self.normalize_project_status(item.get("status"))
-            if status not in self.STATISTICS_COUNTED_STATUSES:
-                continue
-            src_texts.append(self.normalize_item_text(item.get("src", "")))
-            dst_texts.append(self.normalize_item_text(item.get("dst", "")))
-        return tuple(src_texts), tuple(dst_texts)
+        return DataManager.get().collect_rule_statistics_texts()
 
     def get_statistics_entry_key(self, entry: dict[str, Any]) -> str:
         return self.build_statistics_entry_key(entry)
 
     def get_statistics_result_for_row(
         self, entry: dict[str, Any]
-    ) -> RuleStatResult | None:
+    ) -> QualityRuleStatistics.RuleStatResult | None:
         key = self.get_statistics_entry_key(entry)
         if key == "":
             return None
@@ -1086,50 +1222,10 @@ class QualityRulePageBase(Base, QWidget):
     def build_statistics_relation_candidates(
         self, entries: tuple[dict[str, Any], ...]
     ) -> tuple[tuple[str, str], ...]:
-        candidates: list[tuple[str, str]] = []
-        for entry in GapTool.iter(entries):
-            key = self.get_statistics_entry_key(entry)
-            src = str(entry.get("src", "")).strip()
-            if key == "" or src == "":
-                continue
-            candidates.append((key, src))
-        return tuple(candidates)
-
-    def build_statistics_subset_relation_map(
-        self,
-        candidates: tuple[tuple[str, str], ...],
-        token: int,
-    ) -> dict[str, tuple[str, ...]]:
-        subset_map: dict[str, tuple[str, ...]] = {}
-        # 包含关系是 O(n^2) 扫描，这里用 GapTool 定期让出 GIL，避免后台统计挤占 UI 调度。
-        for key, src in GapTool.iter(candidates):
-            if not self.is_statistics_token_valid(token):
-                return {}
-
-            src_fold = src.casefold()
-            if src_fold == "":
-                continue
-
-            parents: list[str] = []
-            seen_parent: set[str] = set()
-            for other_key, other_src in GapTool.iter(candidates):
-                if key == other_key:
-                    continue
-                other_fold = other_src.casefold()
-                if src_fold == other_fold:
-                    continue
-                if src_fold not in other_fold:
-                    continue
-                dedup_key = other_src.casefold()
-                if dedup_key in seen_parent:
-                    continue
-                seen_parent.add(dedup_key)
-                parents.append(other_src)
-
-            if parents:
-                subset_map[key] = tuple(parents)
-
-        return subset_map
+        return QualityRuleStatistics.build_subset_relation_candidates(
+            entries,
+            key_builder=self.get_statistics_entry_key,
+        )
 
     def on_statistics_done(self, token: int, payload: object) -> None:
         if token != self.statistics_token:
@@ -1143,18 +1239,18 @@ class QualityRulePageBase(Base, QWidget):
             self.refresh_statistics_column()
             return
 
-        normalized_results: dict[str, RuleStatResult] = {}
+        normalized_results: dict[str, QualityRuleStatistics.RuleStatResult] = {}
         raw_results = payload.get("results", {})
         if isinstance(raw_results, dict):
             for key, value in raw_results.items():
                 if not isinstance(key, str):
                     continue
-                if isinstance(value, RuleStatResult):
+                if isinstance(value, QualityRuleStatistics.RuleStatResult):
                     normalized_results[key] = value
                     continue
                 if isinstance(value, dict):
                     count = int(value.get("matched_item_count", 0))
-                    normalized_results[key] = RuleStatResult(
+                    normalized_results[key] = QualityRuleStatistics.RuleStatResult(
                         matched_item_count=count,
                     )
 
@@ -1187,23 +1283,19 @@ class QualityRulePageBase(Base, QWidget):
             if not self.is_statistics_token_valid(token):
                 return
 
-            results: dict[str, RuleStatResult] = {}
-            if rules:
-                # 一次性批量统计，避免“每条规则单独扫描文本”的调度开销。
-                results = count_rule_occurrences(rules, src_texts, dst_texts)
-                if not self.is_statistics_token_valid(token):
-                    return
-
-            subset_map = self.build_statistics_subset_relation_map(
-                relation_candidates,
-                token,
+            snapshot = QualityRuleStatistics.build_rule_statistics_snapshot(
+                rules=rules,
+                src_texts=src_texts,
+                dst_texts=dst_texts,
+                relation_candidates=relation_candidates,
+                should_stop=lambda: not self.is_statistics_token_valid(token),
             )
             if not self.is_statistics_token_valid(token):
                 return
 
             payload = {
-                "results": results,
-                "subset_parents": subset_map,
+                "results": snapshot.results,
+                "subset_parents": snapshot.subset_parents,
             }
         except Exception as e:
             LogManager.get().error("规则统计失败", e)
@@ -1253,13 +1345,7 @@ class QualityRulePageBase(Base, QWidget):
             return
         if not DataManager.get().is_loaded():
             self.hide_statistics_preparing_progress()
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.WARNING,
-                    "message": Localizer.get().alert_project_not_loaded,
-                },
-            )
+            self.emit_warning_toast(Localizer.get().alert_project_not_loaded)
             return
 
         entries_snapshot = tuple(
@@ -1427,40 +1513,14 @@ class QualityRulePageBase(Base, QWidget):
         entry = self.edit_panel.get_current_entry()
         ok, error_msg = self.validate_entry(entry)
         if not ok:
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.ERROR,
-                    "message": error_msg,
-                },
-            )
-
-            if self.pending_revert:
-                self.pending_revert()
-            self.pending_action = None
-            self.pending_revert = None
+            self.emit_error_toast(error_msg)
+            self.cancel_pending_guard()
             return
 
         before_count = len(self.entries)
         merged, merge_toast = self.commit_entry(entry)
-        try:
-            self.cleanup_empty_entries()
-            self.save_entries(self.entries)
-            # 避免自身保存触发的 QUALITY_RULE_UPDATE 重载。
-            self.ignore_next_quality_rule_update = True
-        except Exception as e:
-            LogManager.get().error(Localizer.get().task_failed, e)
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.ERROR,
-                    "message": Localizer.get().task_failed,
-                },
-            )
-            if self.pending_revert:
-                self.pending_revert()
-            self.pending_action = None
-            self.pending_revert = None
+        if not self.persist_entries_with_feedback(cleanup_empty_entries=True):
+            self.cancel_pending_guard()
             return
 
         after_count = len(self.entries)
@@ -1468,55 +1528,20 @@ class QualityRulePageBase(Base, QWidget):
 
         if needs_full_refresh:
             # 结构性变化会影响行数与占位行，直接全量刷新更稳妥。
-            self.refresh_table()
-            if self.current_index >= 0 and self.current_index < len(self.entries):
-                self.select_row(self.current_index)
-            else:
-                self.table.clearSelection()
-                self.apply_selection(-1)
+            self.refresh_table_and_restore_row(
+                self.current_index,
+                fallback_to_first=False,
+            )
         else:
-            # 常见路径：只更新当前行内容，避免整表重绘。
-            self.refresh_table_rows([self.current_index])
-
-            if self.current_index >= 0 and self.current_index < len(self.entries):
-                self.block_selection_change = True
-                view_row = self.map_source_row_to_view_row(self.current_index)
-                if view_row >= 0:
-                    self.table.selectRow(view_row)
-                self.block_selection_change = False
-                self.edit_panel.bind_entry(
-                    self.entries[self.current_index], self.current_index + 1
-                )
-            else:
-                self.table.clearSelection()
-                self.apply_selection(-1)
+            self.refresh_current_row_after_save()
 
         if merged and merge_toast:
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.WARNING,
-                    "message": merge_toast,
-                },
-            )
+            self.emit_warning_toast(merge_toast)
 
         # 合并提示与保存成功是两个不同信号：即使发生了去重/覆盖，也要明确告诉用户保存已完成。
-        self.emit(
-            Base.Event.TOAST,
-            {
-                "type": Base.ToastType.SUCCESS,
-                "message": Localizer.get().toast_save,
-            },
-        )
-
-        action = self.pending_action
-        self.pending_action = None
-        self.pending_revert = None
-        if callable(action):
-            action()
-
-        if self.reload_pending:
-            self.reload_entries()
+        self.emit_success_toast(Localizer.get().toast_save)
+        self.run_pending_guard_action()
+        self.run_reload_if_pending()
 
     def delete_current_entry(self) -> None:
         if self.current_index < 0 or self.current_index >= len(self.entries):
@@ -1526,39 +1551,20 @@ class QualityRulePageBase(Base, QWidget):
         del self.entries[self.current_index]
         self.current_index = -1
 
-        try:
-            self.cleanup_empty_entries()
-            self.save_entries(self.entries)
-            # 避免自身保存触发的 QUALITY_RULE_UPDATE 重载。
-            self.ignore_next_quality_rule_update = True
-        except Exception as e:
-            LogManager.get().error(Localizer.get().task_failed, e)
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.ERROR,
-                    "message": Localizer.get().task_failed,
-                },
-            )
+        if not self.persist_entries_with_feedback(cleanup_empty_entries=True):
             return
 
-        self.refresh_table()
-
         if self.entries:
-            self.select_row(min(deleted_index, len(self.entries) - 1))
+            next_index = min(deleted_index, len(self.entries) - 1)
         else:
-            self.apply_selection(-1)
+            next_index = -1
 
-        self.emit(
-            Base.Event.TOAST,
-            {
-                "type": Base.ToastType.SUCCESS,
-                "message": Localizer.get().toast_save,
-            },
+        self.refresh_table_and_restore_row(
+            next_index,
+            fallback_to_first=False,
         )
-
-        if self.reload_pending:
-            self.reload_entries()
+        self.emit_success_toast(Localizer.get().toast_save)
+        self.run_reload_if_pending()
 
     def commit_entry(self, entry: dict[str, Any]) -> tuple[bool, str]:
         """提交当前编辑项到 entries。
@@ -1679,11 +1685,47 @@ class QualityRulePageBase(Base, QWidget):
             if isinstance(v, dict) and str(v.get("src", "")).strip() != ""
         ]
 
+    def query_current_entry(self) -> None:
+        """把当前规则跳转到校对页查询，复用校对页现成搜索链路。"""
+
+        def action() -> None:
+            if self.current_index < 0 or self.current_index >= len(self.entries):
+                return
+
+            entry = self.entries[self.current_index]
+            lookup = self.build_proofreading_lookup(entry)
+            if lookup is None:
+                return
+
+            keyword, is_regex = lookup
+            proofreading_page = getattr(self.main_window, "proofreading_page", None)
+            if proofreading_page is None:
+                return
+
+            proofreading_page.request_lookup(keyword=keyword, is_regex=is_regex)
+            self.main_window.switchTo(proofreading_page)
+
+        self.run_with_unsaved_guard(action)
+
     # ==================== 搜索栏 ====================
 
     def show_search_bar(self) -> None:
         self.search_card.setVisible(True)
         self.command_bar_card.setVisible(False)
+        self.search_card.get_line_edit().setFocus()
+
+    def install_shortcut_tooltip(self, widget: QWidget, shortcut: str) -> None:
+        """统一给命令栏按钮安装仅显示快捷键的 qfluent 提示。"""
+        widget.setToolTip(shortcut)
+        widget.installEventFilter(ToolTipFilter(widget, 300, ToolTipPosition.TOP))
+
+    def on_search_shortcut(self) -> None:
+        """Ctrl+F：打开质量规则搜索栏，或在已展开时聚焦输入框。"""
+        if self.search_button is None:
+            return
+        if not self.search_card.isVisible():
+            self.show_search_bar()
+            return
         self.search_card.get_line_edit().setFocus()
 
     def on_search_back_clicked(self) -> None:
@@ -1721,35 +1763,19 @@ class QualityRulePageBase(Base, QWidget):
             merge_mode=QualityRuleMerger.MergeMode.OVERWRITE,
         )
         self.entries = merged
-        self.cleanup_empty_entries()
-        self.save_entries(self.entries)
-        self.ignore_next_quality_rule_update = True
+        if not self.persist_entries_with_feedback(cleanup_empty_entries=True):
+            return
         self.refresh_table()
-
-        if current_src:
-            for i, v in enumerate(self.entries):
-                if str(v.get("src", "")).strip() == current_src:
-                    self.select_row(i)
-                    break
-        elif self.entries:
-            self.select_row(0)
-
-        self.emit(
-            Base.Event.TOAST,
-            {
-                "type": Base.ToastType.SUCCESS,
-                "message": Localizer.get().quality_import_toast,
-            },
+        self.restore_selection_by_anchor(
+            anchor_src=current_src,
+            anchor_index=-1,
+            fallback_to_first=True,
+            clear_when_empty=False,
         )
+        self.emit_success_toast(Localizer.get().quality_import_toast)
 
         if report.updated > 0 or report.deduped > 0:
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.WARNING,
-                    "message": Localizer.get().quality_merge_duplication,
-                },
-            )
+            self.emit_warning_toast(Localizer.get().quality_merge_duplication)
 
     def add_command_bar_action_import(self, window: FluentWindow) -> CommandButton:
         del window
@@ -1785,13 +1811,7 @@ class QualityRulePageBase(Base, QWidget):
                 return
 
             QualityRuleIO.export_rules(str(Path(path).with_suffix("")), self.entries)
-            self.emit(
-                Base.Event.TOAST,
-                {
-                    "type": Base.ToastType.SUCCESS,
-                    "message": Localizer.get().quality_export_toast,
-                },
-            )
+            self.emit_success_toast(Localizer.get().quality_export_toast)
 
         return self.command_bar_card.add_action(
             Action(
@@ -1802,13 +1822,23 @@ class QualityRulePageBase(Base, QWidget):
         )
 
     def add_command_bar_action_search(self) -> CommandButton:
-        return self.command_bar_card.add_action(
+        self.search_button = self.command_bar_card.add_action(
             Action(
                 ICON_ACTION_SEARCH,
                 Localizer.get().search,
                 triggered=self.show_search_bar,
             )
         )
+        self.install_shortcut_tooltip(
+            self.search_button,
+            Localizer.get().shortcut_ctrl_f,
+        )
+        self.search_shortcut = QShortcut(
+            QKeySequence(Localizer.get().shortcut_ctrl_f),
+            self,
+        )
+        self.search_shortcut.activated.connect(self.on_search_shortcut)
+        return self.search_button
 
     def add_command_bar_action_statistics(self) -> CommandButton:
         self.statistics_button = self.command_bar_card.add_action(
@@ -1847,13 +1877,25 @@ class QualityRulePageBase(Base, QWidget):
         )
         return widget
 
-    def add_command_bar_action_wiki(self) -> None:
-        def connect() -> None:
-            QDesktopServices.openUrl(QUrl("https://github.com/neavo/LinguaGacha/wiki"))
+    def add_standard_command_bar_actions(
+        self,
+        config: Config,
+        window: FluentWindow,
+        *,
+        extra_right_actions: tuple[Callable[[], None], ...] = (),
+    ) -> None:
+        """拼装规则页共用命令栏，减少多个页面重复布局代码。"""
 
-        push_button = TransparentPushButton(
-            ICON_ACTION_WIKI,
-            Localizer.get().wiki,
-        )
-        push_button.clicked.connect(connect)
-        self.command_bar_card.add_widget(push_button)
+        self.command_bar_card.set_minimum_width(640)
+
+        self.add_command_bar_action_import(window)
+        self.add_command_bar_action_export(window)
+        self.command_bar_card.add_separator()
+        self.add_command_bar_action_search()
+        self.add_command_bar_action_statistics()
+        self.command_bar_card.add_separator()
+        self.add_command_bar_action_preset(config, window)
+        self.command_bar_card.add_stretch(1)
+
+        for action in extra_right_actions:
+            action()
