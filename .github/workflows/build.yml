@@ -332,9 +332,7 @@ jobs:
             STATUS="failed"
           fi
           VERSION="${{ needs.prepare.outputs.version }}"
-          TEXT="[GitHub] $ICON LinguaGacha build $STATUS
-Version: $VERSION
-Windows/macOS/Linux: $BUILD_STATUS"
+          TEXT=$(printf '[GitHub] %s LinguaGacha build %s\nVersion: %s\nWindows/macOS/Linux: %s' "$ICON" "$STATUS" "$VERSION" "$BUILD_STATUS")
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
             -d text="$TEXT" > /dev/null
