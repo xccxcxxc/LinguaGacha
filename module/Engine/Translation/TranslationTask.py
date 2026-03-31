@@ -274,15 +274,15 @@ class TranslationTask(Base):
                 refs_ex = [ref_dsts_cp.pop(0) for _ in range(length)]
 
                 if all(v == ResponseChecker.Error.NONE for v in checks_ex):
-                    # 精译模式：所有分片均为 NO_CHANGE 信号时保留粗译原文
-                    if all(
-                        d == ResponseDecoder.NO_CHANGE_SIGNAL for d in dsts_ex
-                    ) and any(r != "" for r in refs_ex):
-                        item.set_dst(item.get_ref_dst())
-                    else:
-                        name, dst = processor.post_process(dsts_ex)
-                        item.set_dst(dst)
-                        item.set_first_name_dst(name) if name is not None else None
+                    # 精译模式：将 NO_CHANGE 信号替换为对应的粗译原文
+                    if any(r != "" for r in refs_ex):
+                        for idx, d in enumerate(dsts_ex):
+                            if d == ResponseDecoder.NO_CHANGE_SIGNAL:
+                                dsts_ex[idx] = refs_ex[idx] if idx < len(refs_ex) else d
+
+                    name, dst = processor.post_process(dsts_ex)
+                    item.set_dst(dst)
+                    item.set_first_name_dst(name) if name is not None else None
                     item.set_status(Base.ProjectStatus.PROCESSED)
                     updated_count = updated_count + 1
 

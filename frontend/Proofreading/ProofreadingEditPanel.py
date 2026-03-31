@@ -227,6 +227,51 @@ class ProofreadingEditPanel(QWidget):
         self.src_text.setProperty("compact", True)
         editor_layout.addWidget(self.src_text, 1)
 
+        # 粗译标签（精译模式下显示）
+        self.ref_dst_label = CaptionLabel(
+            Localizer.get().proofreading_page_ref_dst_label, self.editor_card
+        )
+        self.ref_dst_label.setTextColor(QColor(128, 128, 128), QColor(128, 128, 128))
+        self.ref_dst_label.setFont(label_font)
+        self.ref_dst_label.hide()
+        editor_layout.addWidget(self.ref_dst_label)
+
+        self.ref_dst_text = CustomTextEdit(self.editor_card)
+        ref_dst_font = QFont(self.ref_dst_text.font())
+        ref_dst_font.setPixelSize(self.FONT_SIZE)
+        self.ref_dst_text.setFont(ref_dst_font)
+        self.ref_dst_text.setReadOnly(True)
+        self.ref_dst_text.setMinimumHeight(self.TEXT_MIN_HEIGHT)
+        self.ref_dst_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.ref_dst_text.setProperty("compact", True)
+        self.ref_dst_text.hide()
+        editor_layout.addWidget(self.ref_dst_text, 1)
+
+        # 粗译/精译快速选择按钮（精译模式下显示）
+        self.ref_dst_button_container = QWidget(self.editor_card)
+        ref_dst_btn_layout = QHBoxLayout(self.ref_dst_button_container)
+        ref_dst_btn_layout.setContentsMargins(0, 0, 0, 0)
+        ref_dst_btn_layout.setSpacing(4)
+
+        self.btn_use_ref_dst = TransparentPushButton(self.ref_dst_button_container)
+        self.btn_use_ref_dst.setText(Localizer.get().proofreading_page_use_ref_dst)
+        self.apply_fixed_button_style(self.btn_use_ref_dst)
+        self.btn_use_ref_dst.clicked.connect(self.on_use_ref_dst_clicked)
+        ref_dst_btn_layout.addWidget(self.btn_use_ref_dst, 1)
+
+        ref_dst_btn_layout.addWidget(
+            self.build_vertical_divider(self.ref_dst_button_container)
+        )
+
+        self.btn_use_dst = TransparentPushButton(self.ref_dst_button_container)
+        self.btn_use_dst.setText(Localizer.get().proofreading_page_use_dst)
+        self.apply_fixed_button_style(self.btn_use_dst)
+        self.btn_use_dst.clicked.connect(self.on_use_dst_clicked)
+        ref_dst_btn_layout.addWidget(self.btn_use_dst, 1)
+
+        self.ref_dst_button_container.hide()
+        editor_layout.addWidget(self.ref_dst_button_container)
+
         # 译文标签
         self.dst_label = CaptionLabel(
             Localizer.get().table_col_translation, self.editor_card
@@ -347,6 +392,17 @@ class ProofreadingEditPanel(QWidget):
         self.src_text.blockSignals(False)
         self.dst_text.blockSignals(False)
 
+        # 精译模式：有 ref_dst 时显示粗译区域和快速选择按钮
+        ref_dst = item.get_ref_dst()
+        has_ref_dst = ref_dst != ""
+        self.ref_dst_label.setVisible(has_ref_dst)
+        self.ref_dst_text.setVisible(has_ref_dst)
+        self.ref_dst_button_container.setVisible(has_ref_dst)
+        if has_ref_dst:
+            self.ref_dst_text.blockSignals(True)
+            self.ref_dst_text.setPlainText(ref_dst)
+            self.ref_dst_text.blockSignals(False)
+
         # 以 Qt 实际显示/存储的文本为准，避免 CRLF/LF 差异导致“刚载入就 dirty”。
         self.saved_text = self.dst_text.toPlainText()
         # NOTE: Qt 文档的 modified 状态在此不作为权威来源，避免因 stubs 差异引入类型报错。
@@ -377,6 +433,10 @@ class ProofreadingEditPanel(QWidget):
         self.dst_text.clearFocus()
         self.src_text.setPlainText("")
         self.dst_text.setPlainText("")
+        self.ref_dst_text.setPlainText("")
+        self.ref_dst_label.hide()
+        self.ref_dst_text.hide()
+        self.ref_dst_button_container.hide()
         self.clear_status_tags()
         # 空态也保留文本框，但不展示术语状态，避免占位信息造成困扰。
         self.set_status_tag_visible(self.glossary_status_tag, False)
@@ -485,6 +545,21 @@ class ProofreadingEditPanel(QWidget):
         is_readonly = self.dst_text.isReadOnly()
         # 只读模式下按钮始终禁用；非只读时根据是否有修改决定
         self.btn_save.setEnabled(has_changes and not is_readonly)
+
+    def on_use_ref_dst_clicked(self) -> None:
+        """快速选择：将粗译内容填入译文框"""
+        if not self.current_item:
+            return
+        ref_dst = self.current_item.get_ref_dst()
+        if ref_dst == "":
+            return
+        self.dst_text.setPlainText(ref_dst)
+
+    def on_use_dst_clicked(self) -> None:
+        """快速选择：将当前精译结果填入译文框（恢复为精译结果）"""
+        if not self.current_item:
+            return
+        self.dst_text.setPlainText(self.current_item.get_dst())
 
     def on_dst_text_changed(self) -> None:
         if not self.current_item:
