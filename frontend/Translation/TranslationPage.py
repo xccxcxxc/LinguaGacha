@@ -46,7 +46,6 @@ class TranslationPage(Base, QWidget):
     class TokenDisplayMode(StrEnum):
         INPUT = "INPUT"
         OUTPUT = "OUTPUT"
-        TOTAL = "TOTAL"
 
     # 时间显示模式
     class TimeDisplayMode(StrEnum):
@@ -323,7 +322,7 @@ class TranslationPage(Base, QWidget):
             self.token.title_label.setText(
                 Localizer.get().translation_page_card_token_output
             )
-        elif display_mode == self.TokenDisplayMode.INPUT:
+        else:
             # 兼容旧版本进度字段：若无 total_input_tokens，则用 total_tokens - total_output_tokens 估算
             token = self.data.get("total_input_tokens", 0)
             if token == 0:
@@ -333,13 +332,12 @@ class TranslationPage(Base, QWidget):
             self.token.title_label.setText(
                 Localizer.get().translation_page_card_token_input
             )
-        else:
-            token = self.data.get("total_tokens", 0)
-            self.token.title_label.setText(
-                Localizer.get().translation_page_card_token_total
-            )
 
         self.set_scaled_card_value(self.token, token, "Token")
+
+        # 全部令牌卡片
+        total_token = self.data.get("total_tokens", 0)
+        self.set_scaled_card_value(self.total_token, total_token, "Token")
 
         # 速度计算仅在翻译/停止状态下更新，避免空闲时干扰波形图
         if Engine.get().get_status() in (
@@ -423,6 +421,7 @@ class TranslationPage(Base, QWidget):
         self.add_remaining_line_card(self.flow_layout, config, window)
         self.add_speed_card(self.flow_layout, config, window)
         self.add_token_card(self.flow_layout, config, window)
+        self.add_total_token_card(self.flow_layout, config, window)
         self.add_task_card(self.flow_layout, config, window)
 
         self.container.addWidget(self.flow_container, 1)
@@ -538,11 +537,9 @@ class TranslationPage(Base, QWidget):
         self.token_display_mode = self.TokenDisplayMode.OUTPUT
 
         def on_token_card_clicked(card: DashboardCard) -> None:
-            # 循环切换：OUTPUT → INPUT → TOTAL → OUTPUT
+            # 切换：OUTPUT ↔ INPUT
             if self.token_display_mode == self.TokenDisplayMode.OUTPUT:
                 self.token_display_mode = self.TokenDisplayMode.INPUT
-            elif self.token_display_mode == self.TokenDisplayMode.INPUT:
-                self.token_display_mode = self.TokenDisplayMode.TOTAL
             else:
                 self.token_display_mode = self.TokenDisplayMode.OUTPUT
 
@@ -562,6 +559,19 @@ class TranslationPage(Base, QWidget):
         )
         self.token.setToolTip(Localizer.get().translation_page_card_token_tooltip)
         parent.addWidget(self.token)
+
+    # 全部令牌
+    def add_total_token_card(
+        self, parent: QLayout, config: Config, window: FluentWindow
+    ) -> None:
+        self.total_token = DashboardCard(
+            parent=self,
+            title=Localizer.get().translation_page_card_token_total,
+            value="0",
+            unit="Token",
+        )
+        self.total_token.setFixedSize(204, 204)
+        parent.addWidget(self.total_token)
 
     # 并行任务
     def add_task_card(
