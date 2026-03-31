@@ -17,6 +17,7 @@ def make_config() -> SimpleNamespace:
         source_language="EN",
         target_language="ZH",
         mtool_optimizer_enable=False,
+        refinement_mode=False,
     )
 
 
@@ -76,6 +77,7 @@ def test_is_prefilter_needed_only_skips_when_config_matches_exactly() -> None:
                 "source_language": "EN",
                 "target_language": "ZH",
                 "mtool_optimizer_enable": False,
+                "refinement_mode": False,
             },
             config,
         )

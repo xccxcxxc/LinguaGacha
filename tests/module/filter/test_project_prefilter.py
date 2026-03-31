@@ -210,6 +210,7 @@ class TestProjectPrefilterInputContract:
             "source_language": "ZH",
             "target_language": "EN",
             "mtool_optimizer_enable": False,
+            "refinement_mode": False,
         }
 
 

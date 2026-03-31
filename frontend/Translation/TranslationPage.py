@@ -46,6 +46,7 @@ class TranslationPage(Base, QWidget):
     class TokenDisplayMode(StrEnum):
         INPUT = "INPUT"
         OUTPUT = "OUTPUT"
+        TOTAL = "TOTAL"
 
     # 时间显示模式
     class TimeDisplayMode(StrEnum):
@@ -319,13 +320,18 @@ class TranslationPage(Base, QWidget):
 
         if display_mode == self.TokenDisplayMode.OUTPUT:
             token = self.data.get("total_output_tokens", 0)
-        else:
+            self.token.set_title(Localizer.get().translation_page_card_token_output)
+        elif display_mode == self.TokenDisplayMode.INPUT:
             # 兼容旧版本进度字段：若无 total_input_tokens，则用 total_tokens - total_output_tokens 估算
             token = self.data.get("total_input_tokens", 0)
             if token == 0:
                 token = self.data.get("total_tokens", 0) - self.data.get(
                     "total_output_tokens", 0
                 )
+            self.token.set_title(Localizer.get().translation_page_card_token_input)
+        else:
+            token = self.data.get("total_tokens", 0)
+            self.token.set_title(Localizer.get().translation_page_card_token_total)
 
         self.set_scaled_card_value(self.token, token, "Token")
 
@@ -526,17 +532,13 @@ class TranslationPage(Base, QWidget):
         self.token_display_mode = self.TokenDisplayMode.OUTPUT
 
         def on_token_card_clicked(card: DashboardCard) -> None:
-            # 切换显示模式
+            # 循环切换：OUTPUT → INPUT → TOTAL → OUTPUT
             if self.token_display_mode == self.TokenDisplayMode.OUTPUT:
                 self.token_display_mode = self.TokenDisplayMode.INPUT
-                card.title_label.setText(
-                    Localizer.get().translation_page_card_token_input
-                )
+            elif self.token_display_mode == self.TokenDisplayMode.INPUT:
+                self.token_display_mode = self.TokenDisplayMode.TOTAL
             else:
                 self.token_display_mode = self.TokenDisplayMode.OUTPUT
-                card.title_label.setText(
-                    Localizer.get().translation_page_card_token_output
-                )
 
             self.update_token(self.data)
 

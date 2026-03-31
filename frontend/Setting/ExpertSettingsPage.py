@@ -58,6 +58,7 @@ class ExpertSettingsPage(Base, QWidget):
         self.add_widget_auto_process_prefix_suffix_preserved_text(
             scroll_area_vbox, config, window
         )
+        self.add_widget_refinement_mode(scroll_area_vbox, config, window)
 
         # 填充
         scroll_area_vbox.addStretch(1)
@@ -286,6 +287,30 @@ class ExpertSettingsPage(Base, QWidget):
         switch_button.setOnText("")
         switch_button.setOffText("")
         switch_button.setChecked(config.auto_process_prefix_suffix_preserved_text)
+        switch_button.checkedChanged.connect(
+            lambda checked: checked_changed(switch_button)
+        )
+        card.add_right_widget(switch_button)
+        parent.addWidget(card)
+
+    # 双语精译模式开关
+    def add_widget_refinement_mode(
+        self, parent: QLayout, config: Config, window: FluentWindow
+    ) -> None:
+        def checked_changed(button: SwitchButton) -> None:
+            config = Config().load()
+            config.refinement_mode = button.isChecked()
+            config.save()
+
+        card = SettingCard(
+            title=Localizer.get().expert_settings_page_refinement_mode_title,
+            description=Localizer.get().expert_settings_page_refinement_mode_desc,
+            parent=self,
+        )
+        switch_button = SwitchButton(card)
+        switch_button.setOnText("")
+        switch_button.setOffText("")
+        switch_button.setChecked(config.refinement_mode)
         switch_button.checkedChanged.connect(
             lambda checked: checked_changed(switch_button)
         )

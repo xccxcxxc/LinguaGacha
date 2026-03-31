@@ -1,0 +1,4 @@
+Then use JSONLINE to output refinement results. If the translation is already accurate enough and needs no changes, output __NO_CHANGE__; if it can be improved, output the improved translation. No extra explanation or clarification:
+```jsonline
+{"<INDEX>":"<Refined Text or __NO_CHANGE__>"}
+```

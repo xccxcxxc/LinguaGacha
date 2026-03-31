@@ -36,6 +36,7 @@ class PromptBuilder(Base):
         cls.get_prefix.cache_clear()
         cls.get_suffix.cache_clear()
         cls.get_suffix_thinking.cache_clear()
+        cls.get_suffix_refinement.cache_clear()
         cls.get_analysis_base.cache_clear()
         cls.get_analysis_prefix.cache_clear()
         cls.get_analysis_thinking.cache_clear()
@@ -76,6 +77,13 @@ class PromptBuilder(Base):
     def get_suffix_thinking(cls, language: BaseLanguage.Enum) -> str:
         return cls.read_prompt_text(
             PromptPathResolver.TaskType.TRANSLATION, language, "thinking.txt"
+        )
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def get_suffix_refinement(cls, language: BaseLanguage.Enum) -> str:
+        return cls.read_prompt_text(
+            PromptPathResolver.TaskType.TRANSLATION, language, "suffix_refinement.txt"
         )
 
     @classmethod
@@ -378,6 +386,54 @@ class PromptBuilder(Base):
             return "输入：\n" + "```jsonline\n" + f"{inputs}\n" + "```"
         else:
             return "Input:\n" + "```jsonline\n" + f"{inputs}\n" + "```"
+
+    # 构建精译参考（粗译文本，用于精译模式）
+    def build_ref_dsts(self, ref_dsts: list[str]) -> str:
+        refs = "\n".join(
+            JSONTool.dumps({str(i): line}) for i, line in enumerate(ref_dsts)
+        )
+        if self.is_prompt_ui_zh():
+            return "粗译参考：\n" + "```jsonline\n" + f"{refs}\n" + "```"
+        else:
+            return "Draft Reference:\n" + "```jsonline\n" + f"{refs}\n" + "```"
+
+    # 生成精译提示词（双语精译模式）
+    def generate_refinement_prompt(
+        self,
+        srcs: list[str],
+        ref_dsts: list[str],
+    ) -> tuple[list[dict], list[str]]:
+        # 使用与正常翻译相同的系统指令，但替换输出格式后缀为精译格式
+        messages: list[dict[str, str]] = []
+        console_log: list[str] = []
+
+        prompt_language = self.get_prompt_ui_language()
+
+        # 系统指令：主体不变，后缀换为精译格式
+        base = __class__.get_base(prompt_language)
+        prefix = __class__.get_prefix(prompt_language)
+        suffix_refinement = __class__.get_suffix_refinement(prompt_language)
+        instruction_text = "\n\n".join(
+            part for part in (base, prefix, suffix_refinement) if part
+        )
+
+        user_parts: list[str] = []
+
+        # 粗译参考段落
+        result = self.build_ref_dsts(ref_dsts)
+        if result != "":
+            user_parts.append(result)
+            console_log.append(result)
+
+        # 原文输入
+        result = self.build_inputs(srcs)
+        if result != "":
+            user_parts.append(result)
+
+        messages.append({"role": "system", "content": instruction_text})
+        messages.append({"role": "user", "content": "\n\n".join(user_parts)})
+
+        return messages, console_log
 
     def build_analysis_inputs(self, srcs: list[str]) -> str:
         """分析任务只需要纯文本原文，避免额外结构干扰模型抽取术语。"""

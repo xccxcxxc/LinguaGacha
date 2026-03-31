@@ -52,6 +52,7 @@ class ProjectPrefilter:
         source_language: BaseLanguage.Enum | str,
         target_language: BaseLanguage.Enum | str,
         mtool_optimizer_enable: bool,
+        refinement_mode: bool = False,
         progress_cb: ProgressCallback | None = None,
         progress_every: int = 200,
     ) -> ProjectPrefilterResult:
@@ -113,7 +114,11 @@ class ProjectPrefilter:
 
             tick(offset + idx)
 
-        # 3) MTool 预处理：只在开关打开时对 KVJSON 生效。
+        # 3) 双语精译配对：把相邻的原文(NONE) + 粗译(LANGUAGE_SKIPPED)配对。
+        if refinement_mode:
+            ProjectPrefilter.pair_bilingual_items(items)
+
+        # 4) MTool 预处理：只在开关打开时对 KVJSON 生效。
         if mtool_optimizer_enable:
             mtool_skipped = ProjectPrefilter.mtool_optimizer_preprocess(
                 items_kvjson,
@@ -133,6 +138,7 @@ class ProjectPrefilter:
             "source_language": str(source_language),
             "target_language": str(target_language),
             "mtool_optimizer_enable": bool(mtool_optimizer_enable),
+            "refinement_mode": bool(refinement_mode),
         }
 
         tick(total_steps)
@@ -140,6 +146,43 @@ class ProjectPrefilter:
             stats=stats,
             prefilter_config=prefilter_config,
         )
+
+    @staticmethod
+    def pair_bilingual_items(items: list[Item]) -> None:
+        """双语精译配对：将相邻的原文(NONE)与粗译(LANGUAGE_SKIPPED)配对为精译任务。
+
+        配对规则：item[i] 状态为 NONE 且 item[i+1] 状态为 LANGUAGE_SKIPPED 且同文件。
+        配对后：
+        - item[i] 变为 EXCLUDED（原文原位保留，EPUB writer 不更新该槽）
+        - item[i+1] 的 src 改为 item[i].src（原文），ref_dst 存原粗译，状态改为 NONE
+        已有 ref_dst 的条目跳过（幂等保护）。
+        """
+        all_items = [item for item in GapTool.iter(items)]
+        i = 0
+        while i < len(all_items) - 1:
+            cur = all_items[i]
+            nxt = all_items[i + 1]
+            # 幂等：已配对的条目跳过
+            if nxt.get_ref_dst() != "":
+                i += 2
+                continue
+            # 配对条件：cur 是待翻译原文，nxt 是被语言过滤的粗译，且同一文件
+            if (
+                cur.get_status() == Base.ProjectStatus.NONE
+                and nxt.get_status() == Base.ProjectStatus.LANGUAGE_SKIPPED
+                and cur.get_file_path() == nxt.get_file_path()
+            ):
+                rough_dst = nxt.get_src()
+                original_src = cur.get_src()
+                # nxt 变为精译任务：src←原文，ref_dst←粗译，status←NONE
+                nxt.set_ref_dst(rough_dst)
+                nxt.set_src(original_src)
+                nxt.set_status(Base.ProjectStatus.NONE)
+                # cur 变为已排除：原文原槽不动
+                cur.set_status(Base.ProjectStatus.EXCLUDED)
+                i += 2
+            else:
+                i += 1
 
     @staticmethod
     def mtool_optimizer_preprocess(

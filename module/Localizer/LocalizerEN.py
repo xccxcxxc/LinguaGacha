@@ -394,7 +394,8 @@ class LocalizerEN(LocalizerZH):
     translation_page_card_speed: str = "Average Speed"
     translation_page_card_token_input: str = "Input Tokens"
     translation_page_card_token_output: str = "Output Tokens"
-    translation_page_card_token_tooltip: str = "Click to toggle Input/Output"
+    translation_page_card_token_tooltip: str = "Click to toggle Input/Output/Total"
+    translation_page_card_token_total: str = "Total Tokens"
     translation_page_card_line_processed: str = "Succeeded"
     translation_page_card_line_error: str = "Failed"
     translation_page_card_line_error_tooltip: str = "Usually caused by network failure or api issues"
@@ -471,6 +472,7 @@ class LocalizerEN(LocalizerZH):
     proofreading_page_glossary_miss: str = "Glossary All Failed"
     proofreading_page_glossary_tooltip_applied: str = "Applied"
     proofreading_page_glossary_tooltip_failed: str = "Not Applied"
+    proofreading_page_no_change: str = "No Change"
     proofreading_page_filter_select_all: str = "Select All"
     proofreading_page_filter_no_warning: str = "No Warning"
     proofreading_page_filter_clear: str = "Clear"
@@ -603,6 +605,8 @@ class LocalizerEN(LocalizerZH):
         "<br>"
         "• Disabled: Sends the full text for better context, but may reduce preserve effectiveness"
     )
+    expert_settings_page_refinement_mode_title: str = "Bilingual Refinement Mode"
+    expert_settings_page_refinement_mode_desc: str = "Pairs adjacent source and draft translation when importing bilingual files, refined by a high-quality model; keeps original if no improvement needed"
 
     # 质量类通用
     quality_import: str = "Import"

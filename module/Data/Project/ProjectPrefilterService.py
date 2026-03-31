@@ -48,6 +48,7 @@ class ProjectPrefilterService:
             "source_language": str(config.source_language),
             "target_language": str(config.target_language),
             "mtool_optimizer_enable": bool(config.mtool_optimizer_enable),
+            "refinement_mode": bool(config.refinement_mode),
         }
         return current_config != expected
 
@@ -143,6 +144,7 @@ class ProjectPrefilterService:
             source_language=str(config.source_language),
             target_language=str(config.target_language),
             mtool_optimizer_enable=bool(config.mtool_optimizer_enable),
+            refinement_mode=bool(config.refinement_mode),
         )
 
     def pop_pending_request(self) -> ProjectPrefilterRequest | None:
@@ -191,6 +193,7 @@ class ProjectPrefilterService:
             source_language=request.source_language,
             target_language=request.target_language,
             mtool_optimizer_enable=request.mtool_optimizer_enable,
+            refinement_mode=request.refinement_mode,
             progress_cb=progress_cb,
         )
 

@@ -394,7 +394,8 @@ class LocalizerZH:
     translation_page_card_speed: str = "平均速度"
     translation_page_card_token_input: str = "输入令牌"
     translation_page_card_token_output: str = "输出令牌"
-    translation_page_card_token_tooltip: str = "点击切换 输入/输出"
+    translation_page_card_token_tooltip: str = "点击切换 输入/输出/全部"
+    translation_page_card_token_total: str = "全部令牌"
     translation_page_card_line_processed: str = "翻译成功"
     translation_page_card_line_error: str = "翻译失败"
     translation_page_card_line_error_tooltip: str = "一般是网络故障或者接口问题导致"
@@ -471,6 +472,7 @@ class LocalizerZH:
     proofreading_page_glossary_miss: str = "术语全部失效"
     proofreading_page_glossary_tooltip_applied: str = "生效"
     proofreading_page_glossary_tooltip_failed: str = "未生效"
+    proofreading_page_no_change: str = "无变化"
     proofreading_page_filter_select_all: str = "全选"
     proofreading_page_filter_no_warning: str = "无警告"
     proofreading_page_filter_clear: str = "清除"
@@ -603,6 +605,8 @@ class LocalizerZH:
         "<br>"
         "• 禁用后，会将完整的文本条目发送给模型翻译，可能会获得更完整的语义，但会降低文本保护效果"
     )
+    expert_settings_page_refinement_mode_title: str = "双语精译模式"
+    expert_settings_page_refinement_mode_desc: str = "开启后，导入双语文件时将相邻的原文与粗译自动配对，由高质量模型审校精译；若无需改进则保留原译文"
 
     # 质量类通用
     quality_import: str = "导入"

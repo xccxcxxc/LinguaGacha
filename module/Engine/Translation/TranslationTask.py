@@ -23,6 +23,7 @@ from module.Engine.TaskRequester import TaskRequester
 from module.Localizer.Localizer import Localizer
 from module.PromptBuilder import PromptBuilder
 from module.QualityRule.QualityRuleSnapshot import QualityRuleSnapshot
+from module.Response.ResponseDecoder import ResponseDecoder
 from module.Response.ResponseChecker import ResponseChecker
 from module.TextProcessor import TextProcessor
 
@@ -142,11 +143,15 @@ class TranslationTask(Base):
         precedings: list[Item],
     ) -> dict:
         srcs: list[str] = []
+        ref_dsts: list[str] = []
         samples: list[str] = []
-        for processor in processors:
+        for item, processor in zip(items, processors):
             processor.pre_process()
             srcs.extend(processor.srcs)
             samples.extend(processor.samples)
+            # 精译参考：每个 src 分片对应同一 item 的 ref_dst
+            item_ref_dst = item.get_ref_dst()
+            ref_dsts.extend([item_ref_dst] * len(processor.srcs))
 
         if len(srcs) == 0:
             for item, processor in zip(items, processors):
@@ -158,8 +163,14 @@ class TranslationTask(Base):
                 "result": self.build_result(row_count=len(items)),
             }
 
+        # 精译批次：任意一条 item 携带 ref_dst 即进入精译流程
+        is_refinement_batch = any(rd != "" for rd in ref_dsts)
         api_format = self.model.get("api_format", "OpenAI")
-        if api_format != Base.APIFormat.SAKURALLM:
+        if is_refinement_batch:
+            messages, console_log = self.prompt_builder.generate_refinement_prompt(
+                srcs, ref_dsts
+            )
+        elif api_format != Base.APIFormat.SAKURALLM:
             messages, console_log = self.prompt_builder.generate_prompt(
                 srcs, samples, precedings
             )
@@ -169,6 +180,7 @@ class TranslationTask(Base):
         return {
             "done": False,
             "srcs": srcs,
+            "ref_dsts": ref_dsts,
             "messages": messages,
             "console_log": console_log,
         }
@@ -240,25 +252,37 @@ class TranslationTask(Base):
                     + response_result_log
                 )
 
+        ref_dsts: list[str] = prepared.get("ref_dsts", [])
+
         updated_count = 0
         if any(v == ResponseChecker.Error.NONE for v in checks):
             dsts_cp = dsts.copy()
             checks_cp = checks.copy()
+            ref_dsts_cp = ref_dsts.copy()
             if len(srcs) > len(dsts_cp):
                 dsts_cp.extend([""] * (len(srcs) - len(dsts_cp)))
             if len(srcs) > len(checks_cp):
                 checks_cp.extend(
                     [ResponseChecker.Error.NONE] * (len(srcs) - len(checks_cp))
                 )
+            if len(srcs) > len(ref_dsts_cp):
+                ref_dsts_cp.extend([""] * (len(srcs) - len(ref_dsts_cp)))
             for item, processor in zip(self.items, self.processors):
                 length = len(processor.srcs)
                 dsts_ex = [dsts_cp.pop(0) for _ in range(length)]
                 checks_ex = [checks_cp.pop(0) for _ in range(length)]
+                refs_ex = [ref_dsts_cp.pop(0) for _ in range(length)]
 
                 if all(v == ResponseChecker.Error.NONE for v in checks_ex):
-                    name, dst = processor.post_process(dsts_ex)
-                    item.set_dst(dst)
-                    item.set_first_name_dst(name) if name is not None else None
+                    # 精译模式：所有分片均为 NO_CHANGE 信号时保留粗译原文
+                    if all(
+                        d == ResponseDecoder.NO_CHANGE_SIGNAL for d in dsts_ex
+                    ) and any(r != "" for r in refs_ex):
+                        item.set_dst(item.get_ref_dst())
+                    else:
+                        name, dst = processor.post_process(dsts_ex)
+                        item.set_dst(dst)
+                        item.set_first_name_dst(name) if name is not None else None
                     item.set_status(Base.ProjectStatus.PROCESSED)
                     updated_count = updated_count + 1
 

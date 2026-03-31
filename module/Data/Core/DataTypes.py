@@ -19,6 +19,7 @@ class ProjectPrefilterRequest:
     source_language: str
     target_language: str
     mtool_optimizer_enable: bool
+    refinement_mode: bool = False
 
 
 @dataclass(frozen=True)

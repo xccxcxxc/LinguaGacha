@@ -68,6 +68,7 @@ class Config:
     check_similarity: bool = True
     write_translated_name_fields_to_file: bool = True
     auto_process_prefix_suffix_preserved_text: bool = True
+    refinement_mode: bool = False
 
     # LaboratoryPage
     force_thinking_enable: bool = True

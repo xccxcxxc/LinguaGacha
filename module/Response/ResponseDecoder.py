@@ -5,6 +5,9 @@ from module.Utils.JSONTool import JSONTool
 class ResponseDecoder(Base):
     """统一解码模型回复里的翻译结果和术语条目。"""
 
+    # 精译模式下 LLM 表示无需改动时输出的特殊信号
+    NO_CHANGE_SIGNAL: str = "__NO_CHANGE__"
+
     def __init__(self) -> None:
         super().__init__()
 

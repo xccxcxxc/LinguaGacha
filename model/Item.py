@@ -59,6 +59,7 @@ class Item:
     id: int | None = None  # 数据库主键（自增）
     src: str = ""  # 原文
     dst: str = ""  # 译文
+    ref_dst: str = ""  # 精译参考译文（双语精译模式下存放粗译原文）
     name_src: str | list[str] | None = None  # 角色姓名原文
     name_dst: str | list[str] | None = None  # 角色姓名译文
     extra_field: str | dict = ""  # 额外字段原文
@@ -193,6 +194,16 @@ class Item:
                 self.dst = dst
             else:
                 self.dst = str(dst)
+
+    # 获取精译参考译文
+    def get_ref_dst(self) -> str:
+        with self.lock:
+            return self.ref_dst
+
+    # 设置精译参考译文
+    def set_ref_dst(self, ref_dst: str) -> None:
+        with self.lock:
+            self.ref_dst = ref_dst if isinstance(ref_dst, str) else str(ref_dst)
 
     # 获取角色姓名原文
     def get_name_src(self) -> str | list[str] | None:
