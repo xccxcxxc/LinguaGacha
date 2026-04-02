@@ -425,6 +425,7 @@ class LocalizerEN(LocalizerZH):
     analysis_page_card_token_input: str = "Input Tokens"
     analysis_page_card_token_output: str = "Output Tokens"
     analysis_page_card_token_tooltip: str = "Click to toggle Input/Output"
+    analysis_page_card_token_total: str = "Total Tokens"
     analysis_page_card_task: str = "Real Time Tasks"
     analysis_page_alert_pause: str = "Stopped analysis tasks can be resumed at any time. Confirm to stop the task …?"
     analysis_page_continue: str = "Continue"

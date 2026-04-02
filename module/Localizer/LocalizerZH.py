@@ -425,6 +425,7 @@ class LocalizerZH:
     analysis_page_card_token_input: str = "输入令牌"
     analysis_page_card_token_output: str = "输出令牌"
     analysis_page_card_token_tooltip: str = "点击切换 输入/输出"
+    analysis_page_card_token_total: str = "全部令牌"
     analysis_page_card_task: str = "实时任务数"
     analysis_page_alert_pause: str = "停止的分析任务可以随时继续执行，是否确定停止任务 …?"
     analysis_page_continue: str = "继续"

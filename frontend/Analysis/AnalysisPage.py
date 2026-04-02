@@ -308,6 +308,7 @@ class AnalysisPage(Base, QWidget):
         self.add_remaining_line_card(self.flow_layout)
         self.add_speed_card(self.flow_layout)
         self.add_token_card(self.flow_layout)
+        self.add_total_token_card(self.flow_layout)
         self.add_task_card(self.flow_layout)
 
         parent.addWidget(self.flow_container, 1)
@@ -425,6 +426,16 @@ class AnalysisPage(Base, QWidget):
         )
         self.token.setToolTip(Localizer.get().analysis_page_card_token_tooltip)
         parent.addWidget(self.token)
+
+    def add_total_token_card(self, parent: QLayout) -> None:
+        self.total_token = DashboardCard(
+            parent=self,
+            title=Localizer.get().analysis_page_card_token_total,
+            value="0",
+            unit="Token",
+        )
+        self.total_token.setFixedSize(204, 204)
+        parent.addWidget(self.total_token)
 
     def add_task_card(self, parent: QLayout) -> None:
         self.task = DashboardCard(
@@ -617,6 +628,10 @@ class AnalysisPage(Base, QWidget):
                 )
 
         self.set_scaled_card_value(self.token, token, "Token")
+
+        # 全部令牌卡片
+        total_token = int(self.data.get("total_tokens", 0) or 0)
+        self.set_scaled_card_value(self.total_token, total_token, "Token")
 
     def update_task(self) -> None:
         task = Engine.get().get_request_in_flight_count()
