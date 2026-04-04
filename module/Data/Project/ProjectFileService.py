@@ -210,7 +210,7 @@ class ProjectFileService:
         parent = Path(old_rel_path).parent
         if str(parent) in {".", ""}:
             return new_name
-        return str(parent / new_name)
+        return str(parent / new_name).replace("/", "\\")
 
     def pick_file_type(self, items: list[dict[str, Any]]) -> str:
         """从条目列表里挑出有效文件类型。"""

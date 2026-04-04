@@ -373,7 +373,6 @@ class Analysis(Base):
         )
 
         try:
-            export_dir.mkdir(parents=True, exist_ok=True)
             QualityRuleIO.export_rules(path_base, glossary_entries)
             message = self.build_cli_glossary_export_success_message(
                 export_dir=export_dir,

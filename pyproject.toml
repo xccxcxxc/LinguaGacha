@@ -1,6 +1,6 @@
 [project]
 name = "linguagacha"
-version = "0.60.1"
+version = "0.60.4"
 description = "Add your description here"
 readme = "README.md"
 requires-python = "==3.14.*"
@@ -36,6 +36,9 @@ test = [
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "--cov=module --cov-branch --cov-report=term-missing"
+filterwarnings = [
+    "ignore:'_UnionGenericAlias' is deprecated and slated for removal in Python 3.17:DeprecationWarning:google\\.genai\\.types",
+]
 
 [tool.coverage.run]
 data_file = "tests/.coverage"

@@ -15,6 +15,8 @@ from base.VersionManager import VersionManager
 class TaskRequesterClientPool:
     """SDK client 池：负责 URL 规范化、API Key 轮询与 client 缓存。"""
 
+    SHORT_IO_TIMEOUT_CAP_S: float = 30.0
+
     # 密钥索引
     KEY_INDEX: int = 0
 
@@ -81,6 +83,19 @@ class TaskRequesterClientPool:
         }
 
     @classmethod
+    def build_httpx_timeout(cls, timeout: int) -> httpx.Timeout:
+        """同步流式在 read 之外也需要足够的连接等待窗口，避免高并发下过早报超时。"""
+
+        read_timeout = max(1, int(timeout))
+        short_io_timeout = min(float(read_timeout), cls.SHORT_IO_TIMEOUT_CAP_S)
+        return httpx.Timeout(
+            read=read_timeout,
+            pool=short_io_timeout,
+            write=short_io_timeout,
+            connect=short_io_timeout,
+        )
+
+    @classmethod
     def get_client(
         cls,
         url: str,
@@ -110,12 +125,7 @@ class TaskRequesterClientPool:
                 client = openai.OpenAI(
                     base_url=url,
                     api_key=key,
-                    timeout=httpx.Timeout(
-                        read=timeout,
-                        pool=8.00,
-                        write=8.00,
-                        connect=8.00,
-                    ),
+                    timeout=cls.build_httpx_timeout(timeout),
                     max_retries=0,
                 )
             elif api_format == Base.APIFormat.GOOGLE:
@@ -139,24 +149,14 @@ class TaskRequesterClientPool:
                 client = anthropic.Anthropic(
                     base_url=url,
                     api_key=key,
-                    timeout=httpx.Timeout(
-                        read=timeout,
-                        pool=8.00,
-                        write=8.00,
-                        connect=8.00,
-                    ),
+                    timeout=cls.build_httpx_timeout(timeout),
                     max_retries=0,
                 )
             else:
                 client = openai.OpenAI(
                     base_url=url,
                     api_key=key,
-                    timeout=httpx.Timeout(
-                        read=timeout,
-                        pool=8.00,
-                        write=8.00,
-                        connect=8.00,
-                    ),
+                    timeout=cls.build_httpx_timeout(timeout),
                     max_retries=0,
                 )
 

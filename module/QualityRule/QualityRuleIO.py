@@ -167,6 +167,9 @@ class QualityRuleIO:
         if not isinstance(sheet, openpyxl.worksheet.worksheet.Worksheet):
             raise RuntimeError("Failed to create worksheet")
 
+        # 只有在工作簿创建成功后才触发目录写入，避免把初始化错误掩盖成路径权限问题。
+        Path(base).parent.mkdir(parents=True, exist_ok=True)
+
         sheet.column_dimensions["A"].width = 24
         sheet.column_dimensions["B"].width = 24
         sheet.column_dimensions["C"].width = 24
