@@ -82,9 +82,9 @@ def test_wait_sleeps_then_succeeds_after_refill(
 ) -> None:
     limiter = TaskLimiter(rps=1, rpm=0)
     limiter.current_capacity = 0
-    limiter.last_request_time = 0.0
+    limiter.last_refill_time = 0.0
 
-    times = iter([0.1, 1.1])
+    times = iter([0.1, 1.1, 1.1])
     sleep_calls: list[float] = []
 
     monkeypatch.setattr(task_limiter_module.time, "time", lambda: next(times))
@@ -100,6 +100,33 @@ def test_wait_sleeps_then_succeeds_after_refill(
 def test_wait_returns_true_immediately_when_unlimited() -> None:
     limiter = TaskLimiter(rps=0, rpm=0)
     assert limiter.wait() is True
+
+
+def test_consume_tokens_blocks_until_tpm_budget_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limiter = TaskLimiter(rps=0, rpm=0, tpm=120)
+    limiter.current_tpm_capacity = -60.0
+    limiter.last_refill_time = 0.0
+
+    times = iter([0.0, 29.0, 30.0, 30.0])
+    sleep_calls: list[float] = []
+
+    monkeypatch.setattr(task_limiter_module.time, "time", lambda: next(times))
+    monkeypatch.setattr(
+        task_limiter_module.time, "sleep", lambda value: sleep_calls.append(value)
+    )
+
+    assert limiter.wait() is True
+    assert sleep_calls == [0.25, 0.25]
+
+
+def test_consume_tokens_tracks_tpd_budget() -> None:
+    limiter = TaskLimiter(rps=0, rpm=0, tpd=100)
+
+    limiter.consume_tokens(40)
+
+    assert limiter.current_tpd_capacity == pytest.approx(60.0)
 
 
 def test_release_keeps_zero_when_no_concurrency_in_use() -> None:

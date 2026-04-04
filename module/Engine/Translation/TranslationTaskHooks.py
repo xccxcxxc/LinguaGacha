@@ -173,6 +173,11 @@ class TranslationTaskHooks:
             input_tokens += int(payload.result.get("input_tokens", 0) or 0)
             output_tokens += int(payload.result.get("output_tokens", 0) or 0)
 
+        task_limiter = self.translation.task_limiter
+        if task_limiter is not None:
+            # 运行时只应按真实账单 token 记账，避免任务设置里的 TPM/TPD 变成假参数。
+            task_limiter.consume_tokens(input_tokens + output_tokens)
+
         extras_snapshot = self.translation.update_extras_snapshot(
             processed_count=processed_count,
             error_count=error_count,

@@ -589,10 +589,12 @@ def test_start_creates_progress_bar_for_pending_tasks(
     monkeypatch.setattr(
         analysis_module,
         "TaskLimiter",
-        lambda rps, rpm, max_concurrency: SimpleNamespace(
+        lambda rps, rpm, max_concurrency, tpm=0, tpd=0: SimpleNamespace(
             rps=rps,
             rpm=rpm,
             max_concurrency=max_concurrency,
+            tpm=tpm,
+            tpd=tpd,
         ),
     )
     monkeypatch.setattr(

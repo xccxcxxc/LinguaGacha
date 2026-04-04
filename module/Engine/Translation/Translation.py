@@ -424,11 +424,15 @@ class Translation(Base):
             max_workers: int,
             rps_limit: int,
             rpm_threshold: int,
+            tpm_limit: int,
+            tpd_limit: int,
         ) -> None:
             self.task_limiter = TaskLimiter(
                 rps=rps_limit,
                 rpm=rpm_threshold,
                 max_concurrency=max_workers,
+                tpm=tpm_limit,
+                tpd=tpd_limit,
             )
 
         def execute(plan: TaskRunnerExecutionPlan, max_workers: int) -> str:
@@ -587,7 +591,7 @@ class Translation(Base):
         # 设置项目状态
         dm.set_project_status(status)
 
-    def initialize_task_limits(self) -> tuple[int, int, int]:
+    def initialize_task_limits(self) -> tuple[int, int, int, int, int]:
         """推导任务并发与速率上限。
 
         - `concurrency_limit=0` 表示自动：根据 rpm 估算。
