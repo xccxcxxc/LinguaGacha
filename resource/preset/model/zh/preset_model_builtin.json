@@ -74,7 +74,7 @@
         "api_format": "OpenAI",
         "api_url": "https://api.openai.com/v1",
         "api_key": "no_key_required",
-        "model_id": "gpt-5.4",
+        "model_id": "gpt-4.1-mini",
         "request": {
             "extra_headers": {},
             "extra_body": {},
@@ -84,10 +84,8 @@
         "threshold": {
             "input_token_limit": 768,
             "output_token_limit": 0,
-            "rpm_limit": 5000,
-            "concurrency_limit": 16,
-            "tpm_limit": 2000000,
-            "tpd_limit": 100000000
+            "rpm_limit": 0,
+            "concurrency_limit": 0
         },
         "thinking": {
             "level": "OFF"

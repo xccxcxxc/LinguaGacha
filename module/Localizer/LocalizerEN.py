@@ -303,6 +303,22 @@ class LocalizerEN(LocalizerZH):
         "<br>"
         "Please refer to the API platform's documentation for settings, 0 = unlimited"
     )
+    model_basic_setting_page_tpm_title: str = "Tokens Per Minute Limit (TPM)"
+    model_basic_setting_page_tpm_content: str = (
+        "Maximum total token usage allowed per minute, i.e., the <font color='darkgoldenrod'><b>TPM</b></font> limit"
+        "<br>"
+        "Useful together with RPM to better match the platform's real rate limits, 0 = unlimited"
+        ""
+        ""
+    )
+    model_basic_setting_page_tpd_title: str = "Tokens Per Day Limit (TPD)"
+    model_basic_setting_page_tpd_content: str = (
+        "Maximum total token usage allowed per day, i.e., the <font color='darkgoldenrod'><b>TPD</b></font> limit"
+        "<br>"
+        "Useful for long-running or batch workloads, 0 = unlimited"
+        ""
+        ""
+    )
     model_basic_setting_page_concurrency_title: str = "Concurrent Task Limit"
     model_basic_setting_page_concurrency_content: str = (
         "Maximum number of tasks executing simultaneously"

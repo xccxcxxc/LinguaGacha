@@ -303,6 +303,22 @@ class LocalizerZH:
         ""
         ""
     )
+    model_basic_setting_page_tpm_title: str = "每分钟 Token 数限制 (TPM)"
+    model_basic_setting_page_tpm_content: str = (
+        "每分钟允许消耗的 Token 总量上限，即 <font color='darkgoldenrod'><b>TPM</b></font> 限制"
+        "<br>"
+        "适合和 RPM 一起配置以贴近平台的真实速率限制，0 = 无限制"
+        ""
+        ""
+    )
+    model_basic_setting_page_tpd_title: str = "每日 Token 数限制 (TPD)"
+    model_basic_setting_page_tpd_content: str = (
+        "每天允许消耗的 Token 总量上限，即 <font color='darkgoldenrod'><b>TPD</b></font> 限制"
+        "<br>"
+        "适合需要长期运行或批量任务的场景，0 = 无限制"
+        ""
+        ""
+    )
     model_basic_setting_page_concurrency_title: str = "并发任务数限制"
     model_basic_setting_page_concurrency_content: str = (
         "同时执行的任务数量的最大值"
