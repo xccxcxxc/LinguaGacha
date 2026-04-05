@@ -1,22 +1,30 @@
 import dataclasses
+import random
 import re
 import time
+import uuid
 from contextlib import contextmanager
 from typing import Any
 from typing import Callable
 from typing import Iterator
 
 import anthropic
+import httpx
 import openai
 from google import genai
 from google.genai import types
 
 from base.Base import Base
+from base.LogManager import LogManager
 from model.Model import ThinkingLevel
 from module.Config import Config
 from module.Engine.Engine import Engine
+from module.Engine.TaskRequestErrors import RequestHardTimeoutError
+from module.Engine.TaskRequestErrors import RequestConnectionError
 from module.Engine.TaskRequesterClientPool import TaskRequesterClientPool
 from module.Engine.TaskRequestErrors import RequestCancelledError
+from module.Engine.TaskRequestErrors import RequestHTTPStatusError
+from module.Engine.TaskRequestErrors import RequestRateLimitError
 from module.Engine.TaskRequestErrors import StreamDegradationError
 from module.Engine.TaskRequesterStream import StreamConsumer
 from module.Engine.TaskRequesterStream import StreamControl
@@ -90,6 +98,8 @@ class TaskRequester(Base):
     STREAM_DEGRADATION_FALLBACK_WINDOW_CHARS: int = 512
 
     SDK_TIMEOUT_BUFFER_S: int = 5
+    TRANSIENT_RETRY_LIMIT: int = 2
+    TRANSIENT_RETRY_BASE_DELAY_S: float = 1.0
     OUTPUT_TOKEN_LIMIT_AUTO: int = 0
     LEGACY_OUTPUT_TOKEN_LIMIT_AUTO: int = -1
     ANTHROPIC_AUTO_MAX_TOKENS_MIN: int = 8192
@@ -197,6 +207,187 @@ class TaskRequester(Base):
         headers = TaskRequesterClientPool.get_default_headers()
         headers.update(self.extra_headers)
         return headers
+
+    def build_request_headers(self, client_request_id: str) -> dict[str, str]:
+        """每次请求都带上稳定的客户端请求标识，方便后续对账和支持排查。"""
+
+        headers = self.build_extra_headers()
+        headers["X-Client-Request-Id"] = client_request_id
+        return headers
+
+    @staticmethod
+    def build_client_request_id() -> str:
+        return uuid.uuid4().hex
+
+    @staticmethod
+    def get_exception_status_code(exception: Exception) -> int:
+        response = getattr(exception, "response", None)
+        try:
+            return int(getattr(response, "status_code", 0) or 0)
+        except TypeError, ValueError:
+            return 0
+
+    @classmethod
+    def extract_exception_metadata(
+        cls,
+        exception: Exception,
+        client_request_id: str,
+    ) -> dict[str, str]:
+        response = getattr(exception, "response", None)
+        headers = getattr(response, "headers", None)
+
+        metadata: dict[str, str] = {
+            "client_request_id": client_request_id,
+        }
+        status_code = cls.get_exception_status_code(exception)
+        if status_code > 0:
+            metadata["status_code"] = str(status_code)
+
+        if headers is None:
+            return metadata
+
+        for key in (
+            "x-request-id",
+            "retry-after",
+            "x-ratelimit-limit-requests",
+            "x-ratelimit-remaining-requests",
+            "x-ratelimit-reset-requests",
+            "x-ratelimit-limit-tokens",
+            "x-ratelimit-remaining-tokens",
+            "x-ratelimit-reset-tokens",
+        ):
+            value = headers.get(key)
+            if value is not None and str(value).strip() != "":
+                metadata[key] = str(value)
+        return metadata
+
+    @staticmethod
+    def format_exception_message(summary: str, metadata: dict[str, str]) -> str:
+        parts = [summary]
+        for key in (
+            "status_code",
+            "x-request-id",
+            "client_request_id",
+            "retry-after",
+            "x-ratelimit-limit-requests",
+            "x-ratelimit-remaining-requests",
+            "x-ratelimit-reset-requests",
+            "x-ratelimit-limit-tokens",
+            "x-ratelimit-remaining-tokens",
+            "x-ratelimit-reset-tokens",
+        ):
+            value = metadata.get(key)
+            if value is not None:
+                parts.append(f"{key}={value}")
+        return " | ".join(parts)
+
+    @classmethod
+    def is_retryable_exception(cls, exception: Exception) -> bool:
+        if isinstance(exception, (openai.RateLimitError, openai.APIConnectionError)):
+            return True
+        if isinstance(
+            exception,
+            (
+                openai.APITimeoutError,
+                httpx.PoolTimeout,
+                httpx.ConnectTimeout,
+                httpx.ReadTimeout,
+                httpx.WriteTimeout,
+            ),
+        ):
+            return True
+        if isinstance(exception, openai.APIStatusError):
+            return cls.get_exception_status_code(exception) >= 500
+        return False
+
+    @classmethod
+    def classify_exception(
+        cls,
+        exception: Exception,
+        client_request_id: str,
+    ) -> Exception:
+        if isinstance(
+            exception,
+            (
+                RequestCancelledError,
+                RequestHardTimeoutError,
+                RequestConnectionError,
+                RequestRateLimitError,
+                RequestHTTPStatusError,
+                StreamDegradationError,
+            ),
+        ):
+            return exception
+
+        cause = getattr(exception, "__cause__", None)
+        metadata = cls.extract_exception_metadata(exception, client_request_id)
+        if isinstance(exception, openai.RateLimitError):
+            return RequestRateLimitError(
+                cls.format_exception_message("rate limited by upstream", metadata)
+            )
+        if isinstance(exception, openai.APITimeoutError):
+            return RequestHardTimeoutError(
+                cls.format_exception_message("sdk timeout", metadata)
+            )
+        if isinstance(exception, openai.APIConnectionError):
+            if isinstance(cause, httpx.PoolTimeout):
+                return RequestConnectionError(
+                    cls.format_exception_message("connection pool timeout", metadata)
+                )
+            if isinstance(cause, httpx.ReadTimeout):
+                return RequestHardTimeoutError(
+                    cls.format_exception_message("read timeout", metadata)
+                )
+            if isinstance(cause, (httpx.ConnectTimeout, httpx.WriteTimeout)):
+                return RequestConnectionError(
+                    cls.format_exception_message("connection timeout", metadata)
+                )
+            return RequestConnectionError(
+                cls.format_exception_message("api connection error", metadata)
+            )
+        if isinstance(exception, httpx.PoolTimeout):
+            return RequestConnectionError(
+                cls.format_exception_message("connection pool timeout", metadata)
+            )
+        if isinstance(exception, httpx.ReadTimeout):
+            return RequestHardTimeoutError(
+                cls.format_exception_message("read timeout", metadata)
+            )
+        if isinstance(exception, (httpx.ConnectTimeout, httpx.WriteTimeout)):
+            return RequestConnectionError(
+                cls.format_exception_message("connection timeout", metadata)
+            )
+        if isinstance(exception, openai.APIStatusError):
+            return RequestHTTPStatusError(
+                cls.format_exception_message("http status error", metadata)
+            )
+        return exception
+
+    def log_retryable_exception(
+        self,
+        exception: Exception,
+        classified_exception: Exception,
+        attempt: int,
+    ) -> None:
+        LogManager.get().warning(
+            f"request transient failure, attempt={attempt + 1}/{self.TRANSIENT_RETRY_LIMIT + 1}, "
+            f"model={self.model_id}, message={classified_exception}",
+            exception,
+        )
+
+    def sleep_before_retry(
+        self,
+        *,
+        attempt: int,
+        stop_checker: Callable[[], bool] | None,
+    ) -> bool:
+        delay_s = self.TRANSIENT_RETRY_BASE_DELAY_S * (2**attempt) + random.random()
+        deadline = time.monotonic() + delay_s
+        while time.monotonic() < deadline:
+            if stop_checker is not None and stop_checker():
+                return False
+            time.sleep(0.1)
+        return True
 
     @classmethod
     def extract_openai_think_and_result(cls, message: Any) -> tuple[str, str]:
@@ -627,27 +818,49 @@ class TaskRequester(Base):
         if stop_checker is not None and stop_checker():
             return RequestCancelledError("stop requested"), "", "", 0, 0
 
-        try:
-            client: Any = TaskRequesterClientPool.get_client(
-                url=TaskRequesterClientPool.get_url(self.api_url, self.api_format),
-                key=TaskRequesterClientPool.get_key(self.api_keys),
-                api_format=self.api_format,
-                timeout=self.get_sdk_timeout_seconds(),
-            )
+        last_exception: Exception | None = None
+        for attempt in range(self.TRANSIENT_RETRY_LIMIT + 1):
+            client_request_id = self.build_client_request_id()
+            try:
+                client: Any = TaskRequesterClientPool.get_client(
+                    url=TaskRequesterClientPool.get_url(self.api_url, self.api_format),
+                    key=TaskRequesterClientPool.get_key(self.api_keys),
+                    api_format=self.api_format,
+                    timeout=self.get_sdk_timeout_seconds(),
+                )
+                request_args = self.generate_sakura_args(messages, args)
+                request_args["extra_headers"] = self.build_request_headers(
+                    client_request_id
+                )
 
-            (
-                response_think,
-                response_result,
-                input_tokens,
-                output_tokens,
-            ) = self.request_stream_with_strategy(
-                client,
-                self.generate_sakura_args(messages, args),
-                __class__.OpenAIStreamStrategy(self),
-                stop_checker=stop_checker,
-            )
-        except Exception as e:
-            return e, "", "", 0, 0
+                (
+                    response_think,
+                    response_result,
+                    input_tokens,
+                    output_tokens,
+                ) = self.request_stream_with_strategy(
+                    client,
+                    request_args,
+                    __class__.OpenAIStreamStrategy(self),
+                    stop_checker=stop_checker,
+                )
+                break
+            except Exception as e:
+                classified_exception = self.classify_exception(e, client_request_id)
+                last_exception = classified_exception
+                if (
+                    attempt >= self.TRANSIENT_RETRY_LIMIT
+                    or not self.is_retryable_exception(e)
+                ):
+                    return classified_exception, "", "", 0, 0
+                self.log_retryable_exception(e, classified_exception, attempt)
+                if not self.sleep_before_retry(
+                    attempt=attempt,
+                    stop_checker=stop_checker,
+                ):
+                    return RequestCancelledError("stop requested"), "", "", 0, 0
+        else:
+            return last_exception or RuntimeError("request failed"), "", "", 0, 0
 
         response_result = JSONTool.dumps(
             {
@@ -716,27 +929,49 @@ class TaskRequester(Base):
         if stop_checker is not None and stop_checker():
             return RequestCancelledError("stop requested"), "", "", 0, 0
 
-        try:
-            client: Any = TaskRequesterClientPool.get_client(
-                url=TaskRequesterClientPool.get_url(self.api_url, self.api_format),
-                key=TaskRequesterClientPool.get_key(self.api_keys),
-                api_format=self.api_format,
-                timeout=self.get_sdk_timeout_seconds(),
-            )
+        last_exception: Exception | None = None
+        for attempt in range(self.TRANSIENT_RETRY_LIMIT + 1):
+            client_request_id = self.build_client_request_id()
+            try:
+                client: Any = TaskRequesterClientPool.get_client(
+                    url=TaskRequesterClientPool.get_url(self.api_url, self.api_format),
+                    key=TaskRequesterClientPool.get_key(self.api_keys),
+                    api_format=self.api_format,
+                    timeout=self.get_sdk_timeout_seconds(),
+                )
+                request_args = self.generate_openai_args(messages, args)
+                request_args["extra_headers"] = self.build_request_headers(
+                    client_request_id
+                )
 
-            (
-                response_think,
-                response_result,
-                input_tokens,
-                output_tokens,
-            ) = self.request_stream_with_strategy(
-                client,
-                self.generate_openai_args(messages, args),
-                __class__.OpenAIStreamStrategy(self),
-                stop_checker=stop_checker,
-            )
-        except Exception as e:
-            return e, "", "", 0, 0
+                (
+                    response_think,
+                    response_result,
+                    input_tokens,
+                    output_tokens,
+                ) = self.request_stream_with_strategy(
+                    client,
+                    request_args,
+                    __class__.OpenAIStreamStrategy(self),
+                    stop_checker=stop_checker,
+                )
+                break
+            except Exception as e:
+                classified_exception = self.classify_exception(e, client_request_id)
+                last_exception = classified_exception
+                if (
+                    attempt >= self.TRANSIENT_RETRY_LIMIT
+                    or not self.is_retryable_exception(e)
+                ):
+                    return classified_exception, "", "", 0, 0
+                self.log_retryable_exception(e, classified_exception, attempt)
+                if not self.sleep_before_retry(
+                    attempt=attempt,
+                    stop_checker=stop_checker,
+                ):
+                    return RequestCancelledError("stop requested"), "", "", 0, 0
+        else:
+            return last_exception or RuntimeError("request failed"), "", "", 0, 0
 
         return None, response_think, response_result, input_tokens, output_tokens
 

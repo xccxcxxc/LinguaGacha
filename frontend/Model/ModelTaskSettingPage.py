@@ -14,6 +14,8 @@ from widget.SettingCard import SettingCard
 
 
 class ModelTaskSettingPage(Base, MessageBoxBase):
+    THRESHOLD_SPINBOX_MAX: int = 999999999
+
     def __init__(self, model_id: str, window: FluentWindow) -> None:
         super().__init__(window)
 
@@ -75,7 +77,7 @@ class ModelTaskSettingPage(Base, MessageBoxBase):
             parent=self,
         )
         spin_box = SpinBox(card)
-        spin_box.setRange(0, 9999999)
+        spin_box.setRange(0, self.THRESHOLD_SPINBOX_MAX)
         spin_box.setValue(threshold.get("input_token_limit", 512))
         # 必须在 lambda 默认参数中绑定当前控件，避免循环内复用变量导致回调串写。
         spin_box.valueChanged.connect(
@@ -101,7 +103,7 @@ class ModelTaskSettingPage(Base, MessageBoxBase):
             parent=self,
         )
         spin_box = SpinBox(card)
-        spin_box.setRange(0, 9999999)
+        spin_box.setRange(0, self.THRESHOLD_SPINBOX_MAX)
         spin_box.setValue(threshold.get("output_token_limit", 4096))
         spin_box.valueChanged.connect(
             lambda value, target_spin_box=spin_box: value_changed_output_token(
@@ -126,7 +128,7 @@ class ModelTaskSettingPage(Base, MessageBoxBase):
             parent=self,
         )
         spin_box = SpinBox(card)
-        spin_box.setRange(0, 9999999)
+        spin_box.setRange(0, self.THRESHOLD_SPINBOX_MAX)
         spin_box.setValue(threshold.get("concurrency_limit", 0))
         spin_box.valueChanged.connect(
             lambda value, target_spin_box=spin_box: value_changed_concurrency(
@@ -151,10 +153,56 @@ class ModelTaskSettingPage(Base, MessageBoxBase):
             parent=self,
         )
         spin_box = SpinBox(card)
-        spin_box.setRange(0, 9999999)
+        spin_box.setRange(0, self.THRESHOLD_SPINBOX_MAX)
         spin_box.setValue(threshold.get("rpm_limit", 0))
         spin_box.valueChanged.connect(
             lambda value, target_spin_box=spin_box: value_changed_rpm(target_spin_box)
+        )
+        card.add_right_widget(spin_box)
+        parent.addWidget(card)
+
+        # TPM 限制
+        def value_changed_tpm(spin_box: SpinBox) -> None:
+            config = Config().load()
+            if "threshold" not in self.model:
+                self.model["threshold"] = {}
+            self.model["threshold"]["tpm_limit"] = spin_box.value()
+            config.set_model(self.model)
+            config.save()
+
+        card = SettingCard(
+            title=Localizer.get().model_basic_setting_page_tpm_title,
+            description=Localizer.get().model_basic_setting_page_tpm_content,
+            parent=self,
+        )
+        spin_box = SpinBox(card)
+        spin_box.setRange(0, self.THRESHOLD_SPINBOX_MAX)
+        spin_box.setValue(threshold.get("tpm_limit", 2000000))
+        spin_box.valueChanged.connect(
+            lambda value, target_spin_box=spin_box: value_changed_tpm(target_spin_box)
+        )
+        card.add_right_widget(spin_box)
+        parent.addWidget(card)
+
+        # TPD 限制
+        def value_changed_tpd(spin_box: SpinBox) -> None:
+            config = Config().load()
+            if "threshold" not in self.model:
+                self.model["threshold"] = {}
+            self.model["threshold"]["tpd_limit"] = spin_box.value()
+            config.set_model(self.model)
+            config.save()
+
+        card = SettingCard(
+            title=Localizer.get().model_basic_setting_page_tpd_title,
+            description=Localizer.get().model_basic_setting_page_tpd_content,
+            parent=self,
+        )
+        spin_box = SpinBox(card)
+        spin_box.setRange(0, self.THRESHOLD_SPINBOX_MAX)
+        spin_box.setValue(threshold.get("tpd_limit", 100000000))
+        spin_box.valueChanged.connect(
+            lambda value, target_spin_box=spin_box: value_changed_tpd(target_spin_box)
         )
         card.add_right_widget(spin_box)
         parent.addWidget(card)

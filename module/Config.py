@@ -164,6 +164,7 @@ class Config:
             return
 
     def load(self, path: str | None = None) -> Self:
+        should_log_error = path is not None
         path = __class__.resolve_path(path)
 
         with __class__.CONFIG_LOCK:
@@ -176,11 +177,14 @@ class Config:
                             if hasattr(self, k):
                                 setattr(self, k, v)
             except Exception as e:
-                LogManager.get().error(f"{Localizer.get().log_read_file_fail}", e)
+                # 默认路径属于启动期兜底配置，失败时静默回退；显式路径仍保留可观测日志。
+                if should_log_error:
+                    LogManager.get().error(Localizer.get().log_read_file_fail, e)
 
         return self
 
     def save(self, path: str | None = None) -> Self:
+        should_log_error = path is not None
         path = __class__.resolve_path(path)
 
         # 按分类排序: 预设 - Google - OpenAI - Claude
@@ -197,7 +201,9 @@ class Config:
                 with open(path, "w", encoding="utf-8") as writer:
                     writer.write(JSONTool.dumps(dataclasses.asdict(self), indent=4))
             except Exception as e:
-                LogManager.get().error(f"{Localizer.get().log_write_file_fail}", e)
+                # 默认路径写入失败时只保留内存态；显式导入导出路径仍记录日志便于排查。
+                if should_log_error:
+                    LogManager.get().error(Localizer.get().log_write_file_fail, e)
 
         return self
 

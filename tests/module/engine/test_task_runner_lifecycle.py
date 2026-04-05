@@ -291,3 +291,77 @@ def test_run_task_flow_skips_finalize_and_done_when_plan_has_no_items(
     cleanup.assert_called_once_with()
     after_done.assert_not_called()
     assert engine.status == Base.TaskStatus.IDLE
+
+
+def test_build_task_limits_returns_rpm_tpm_and_tpd_from_threshold() -> None:
+    model = {
+        "threshold": {
+            "concurrency_limit": 0,
+            "rpm_limit": 5000,
+            "tpm_limit": 2000000,
+            "tpd_limit": 100000000,
+        }
+    }
+
+    assert TaskRunnerLifecycle.build_task_limits(model) == (
+        64,
+        0,
+        5000,
+        2000000,
+        100000000,
+    )
+
+
+def test_run_task_flow_binds_tpm_and_tpd_to_task_limiter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = create_owner()
+    engine = create_engine(Base.TaskStatus.TRANSLATING)
+    bind_task_limiter = MagicMock()
+    finalize = MagicMock()
+    cleanup = MagicMock()
+    after_done = MagicMock()
+
+    monkeypatch.setattr(
+        lifecycle_module.Engine,
+        "get",
+        staticmethod(lambda: engine),
+    )
+
+    TaskRunnerLifecycle.run_task_flow(
+        owner,
+        task_event=Base.Event.TRANSLATION_TASK,
+        hooks=TaskRunnerHooks(
+            prepare=MagicMock(return_value=True),
+            build_plan=MagicMock(
+                return_value=TaskRunnerExecutionPlan(
+                    total_line=10,
+                    line=0,
+                    has_pending_work=True,
+                    idle_final_status="SUCCESS",
+                )
+            ),
+            persist_progress=MagicMock(return_value={}),
+            get_model=MagicMock(
+                return_value={
+                    "threshold": {
+                        "concurrency_limit": 3,
+                        "rpm_limit": 120,
+                        "tpm_limit": 6000,
+                        "tpd_limit": 240000,
+                    }
+                }
+            ),
+            bind_task_limiter=bind_task_limiter,
+            clear_task_limiter=MagicMock(),
+            on_before_execute=MagicMock(),
+            execute=MagicMock(return_value="SUCCESS"),
+            on_after_execute=MagicMock(),
+            terminal_toast=MagicMock(),
+            finalize=finalize,
+            cleanup=cleanup,
+            after_done=after_done,
+        ),
+    )
+
+    bind_task_limiter.assert_called_once_with(3, 0, 120, 6000, 240000)

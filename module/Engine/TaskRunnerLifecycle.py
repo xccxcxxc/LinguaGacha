@@ -33,7 +33,7 @@ class TaskRunnerHooks:
     build_plan: Callable[[], TaskRunnerExecutionPlan]
     persist_progress: Callable[[bool], dict[str, Any]]
     get_model: Callable[[], dict[str, Any] | None]
-    bind_task_limiter: Callable[[int, int, int], None]
+    bind_task_limiter: Callable[[int, int, int, int, int], None]
     clear_task_limiter: Callable[[], None]
     on_before_execute: Callable[[], None]
     execute: Callable[[TaskRunnerExecutionPlan, int], str]
@@ -176,15 +176,19 @@ class TaskRunnerLifecycle:
         return None
 
     @staticmethod
-    def build_task_limits(model: dict[str, Any] | None) -> tuple[int, int, int]:
-        """统一并发和速率限制推导口径。"""
+    def build_task_limits(
+        model: dict[str, Any] | None,
+    ) -> tuple[int, int, int, int, int]:
+        """统一并发、请求速率和 token 预算的推导口径。"""
 
         if model is None:
-            return 8, 8, 0
+            return 8, 8, 0, 0, 0
 
         threshold = model.get("threshold", {})
         max_concurrency = max(0, int(threshold.get("concurrency_limit", 0) or 0))
         rpm_limit = max(0, int(threshold.get("rpm_limit", 0) or 0))
+        tpm_limit = max(0, int(threshold.get("tpm_limit", 0) or 0))
+        tpd_limit = max(0, int(threshold.get("tpd_limit", 0) or 0))
 
         if max_concurrency == 0:
             if rpm_limit > 0:
@@ -197,7 +201,7 @@ class TaskRunnerLifecycle:
             rps_limit = 0
         else:
             rps_limit = max_concurrency
-        return max_concurrency, rps_limit, rpm_limit
+        return max_concurrency, rps_limit, rpm_limit, tpm_limit, tpd_limit
 
     @staticmethod
     def emit_terminal_toast(owner: Base, *, final_status: str) -> None:
@@ -349,10 +353,16 @@ class TaskRunnerLifecycle:
                 hooks.terminal_toast(flow_final_status)
                 return
 
-            max_workers, rps_limit, rpm_threshold = cls.build_task_limits(
-                hooks.get_model()
+            max_workers, rps_limit, rpm_threshold, tpm_limit, tpd_limit = (
+                cls.build_task_limits(hooks.get_model())
             )
-            hooks.bind_task_limiter(max_workers, rps_limit, rpm_threshold)
+            hooks.bind_task_limiter(
+                max_workers,
+                rps_limit,
+                rpm_threshold,
+                tpm_limit,
+                tpd_limit,
+            )
             hooks.on_before_execute()
             flow_final_status = hooks.execute(plan, max_workers)
             hooks.on_after_execute(flow_final_status)

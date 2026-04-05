@@ -21,6 +21,7 @@ class FakeLimiter:
         self.acquire_calls = 0
         self.wait_calls = 0
         self.release_calls = 0
+        self.consumed_tokens: list[int] = []
 
     def acquire(self, stop_checker) -> bool:
         del stop_checker
@@ -34,6 +35,9 @@ class FakeLimiter:
 
     def release(self) -> None:
         self.release_calls += 1
+
+    def consume_tokens(self, token_count: int) -> None:
+        self.consumed_tokens.append(token_count)
 
 
 class FakeErrorLogger:
@@ -78,7 +82,7 @@ def build_hooks(
     initial_contexts: list[AnalysisTaskContext] | None = None,
 ) -> tuple[AnalysisTaskHooks, Analysis]:
     analysis = Analysis()
-    analysis.task_limiter = limiter
+    analysis.task_limiter = limiter if limiter is not None else FakeLimiter()
     analysis.progress_tracker = SimpleNamespace(
         update_extras_after_batch=MagicMock(),
         mark_progress_dirty=MagicMock(),
@@ -213,6 +217,7 @@ def test_analysis_task_hooks_handle_commit_payloads_requeues_retry_context(
         input_tokens=1,
         output_tokens=2,
     )
+    assert analysis.task_limiter.consumed_tokens == [3]
     assert result.retry_contexts == (retry_context,)
     assert result.failed is False
 
@@ -301,6 +306,7 @@ def test_analysis_task_hooks_handle_commit_payloads_merges_success_and_error_bat
     analysis.progress_tracker.update_runtime_counts_after_error.assert_called_once_with(
         error_context
     )
+    assert analysis.task_limiter.consumed_tokens == [18]
     commit_result_spy.assert_called_once_with(
         success_checkpoints=[{"item_id": 1, "status": "processed"}],
         error_checkpoints=[{"item_id": 2, "status": "error"}],
@@ -368,7 +374,8 @@ def test_analysis_task_hooks_run_context_returns_none_when_limiter_refuses(
 
 def test_analysis_task_hooks_run_context_starts_task_without_limiter() -> None:
     context = build_context(item_ids=(1,))
-    hooks, _analysis = build_hooks(limiter=None, initial_contexts=[context])
+    hooks, analysis = build_hooks(limiter=FakeLimiter(), initial_contexts=[context])
+    analysis.task_limiter = None
 
     payload = hooks.run_context(context)
 

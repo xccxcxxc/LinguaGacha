@@ -142,10 +142,19 @@ class FakePromptBuilder:
 
 
 class FakeTaskLimiter:
-    def __init__(self, rps: int, rpm: int, max_concurrency: int) -> None:
+    def __init__(
+        self,
+        rps: int,
+        rpm: int,
+        max_concurrency: int,
+        tpm: int = 0,
+        tpd: int = 0,
+    ) -> None:
         self.rps = rps
         self.rpm = rpm
         self.max_concurrency = max_concurrency
+        self.tpm = tpm
+        self.tpd = tpd
 
     def get_concurrency_in_use(self) -> int:
         return 0
@@ -382,13 +391,13 @@ def test_initialize_task_limits_covers_default_and_auto_derive() -> None:
     if hasattr(translation, "model"):
         del translation.model
 
-    assert Translation.initialize_task_limits(translation) == (8, 8, 0)
+    assert Translation.initialize_task_limits(translation) == (8, 8, 0, 0, 0)
 
     translation.model = {"threshold": {"concurrency_limit": 0, "rpm_limit": 120}}
-    assert Translation.initialize_task_limits(translation) == (8, 0, 120)
+    assert Translation.initialize_task_limits(translation) == (8, 0, 120, 0, 0)
 
     translation.model = {"threshold": {"concurrency_limit": 5, "rpm_limit": 0}}
-    assert Translation.initialize_task_limits(translation) == (5, 5, 0)
+    assert Translation.initialize_task_limits(translation) == (5, 5, 0, 0, 0)
 
 
 def test_get_task_buffer_size_has_lower_and_upper_bounds() -> None:
@@ -1242,7 +1251,7 @@ def test_initialize_task_limits_defaults_when_rpm_and_concurrency_are_zero() -> 
     translation = create_translation_stub()
     translation.model = {"threshold": {"concurrency_limit": 0, "rpm_limit": 0}}
 
-    assert Translation.initialize_task_limits(translation) == (8, 8, 0)
+    assert Translation.initialize_task_limits(translation) == (8, 8, 0, 0, 0)
 
 
 def test_start_translation_pipeline_builds_pipeline_and_runs(

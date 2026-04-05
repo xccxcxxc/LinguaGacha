@@ -67,25 +67,31 @@ class LogManager:
         self.async_enabled: bool = False
         self.shutdown_complete: bool = False
 
-        log_path = BasePath.get_log_dir()
-        os.makedirs(log_path, exist_ok=True)
+        self.file_handler: logging.Handler
+        try:
+            log_path = BasePath.get_log_dir()
+            os.makedirs(log_path, exist_ok=True)
 
-        # 文件日志始终是最权威的排障来源，所以保留原来的轮转策略。
-        self.file_handler = TimedRotatingFileHandler(
-            f"{log_path}/app.log",
-            when="midnight",
-            interval=1,
-            encoding="utf-8",
-            backupCount=3,
-        )
-        self.file_handler.setLevel(logging.DEBUG)
-        self.file_handler.setFormatter(
-            logging.Formatter(
-                "[%(asctime)s] [%(levelname)s] %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
+            # 文件日志始终是最权威的排障来源，所以保留原来的轮转策略。
+            file_handler = TimedRotatingFileHandler(
+                f"{log_path}/app.log",
+                when="midnight",
+                interval=1,
+                encoding="utf-8",
+                backupCount=3,
             )
-        )
-        self.file_handler.addFilter(LogTargetFilter(emit_key="emit_file"))
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(
+                logging.Formatter(
+                    "[%(asctime)s] [%(levelname)s] %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
+            )
+            file_handler.addFilter(LogTargetFilter(emit_key="emit_file"))
+            self.file_handler = file_handler
+        except Exception:
+            # 某些受限环境没有可写日志目录，此时降级为仅控制台日志，不能影响业务流程。
+            self.file_handler = logging.NullHandler()
 
         # 结构化控制台日志继续交给 RichHandler，方便平时看级别和时间。
         self.structured_console_handler = RichHandler(

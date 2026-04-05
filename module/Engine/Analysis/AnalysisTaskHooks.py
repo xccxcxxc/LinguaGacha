@@ -136,6 +136,11 @@ class AnalysisTaskHooks:
             error_checkpoints.extend(scheduler.build_error_checkpoints(result.context))
             failed = True
 
+        task_limiter = self.analysis.task_limiter
+        if task_limiter is not None:
+            # 分析任务同样以实际返回 token 为权威来源，避免界面阈值只停留在配置层。
+            task_limiter.consume_tokens(total_input_tokens + total_output_tokens)
+
         tracker.update_extras_after_batch(
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,

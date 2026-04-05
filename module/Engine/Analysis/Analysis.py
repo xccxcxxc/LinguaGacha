@@ -373,7 +373,6 @@ class Analysis(Base):
         )
 
         try:
-            export_dir.mkdir(parents=True, exist_ok=True)
             QualityRuleIO.export_rules(path_base, glossary_entries)
             message = self.build_cli_glossary_export_success_message(
                 export_dir=export_dir,
@@ -585,11 +584,15 @@ class Analysis(Base):
             max_workers: int,
             rps_limit: int,
             rpm_threshold: int,
+            tpm_limit: int,
+            tpd_limit: int,
         ) -> None:
             self.task_limiter = TaskLimiter(
                 rps=rps_limit,
                 rpm=rpm_threshold,
                 max_concurrency=max_workers,
+                tpm=tpm_limit,
+                tpd=tpd_limit,
             )
 
         def execute(plan: TaskRunnerExecutionPlan, max_workers: int) -> str:
@@ -651,7 +654,7 @@ class Analysis(Base):
             )
 
     # 并发和速率推导维持原有策略，只保留一个公开入口方便两边共用。
-    def initialize_task_limits(self) -> tuple[int, int, int]:
+    def initialize_task_limits(self) -> tuple[int, int, int, int, int]:
         return TaskRunnerLifecycle.build_task_limits(self.model)
 
     # 停止判断收口成一个入口，流水线和主流程都不用重复看两处状态。

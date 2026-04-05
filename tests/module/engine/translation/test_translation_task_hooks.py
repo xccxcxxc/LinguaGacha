@@ -19,6 +19,7 @@ class FakeLimiter:
         self.acquire_calls = 0
         self.wait_calls = 0
         self.release_calls = 0
+        self.consumed_tokens: list[int] = []
 
     def acquire(self, stop_checker: Any = None) -> bool:
         del stop_checker
@@ -32,6 +33,9 @@ class FakeLimiter:
 
     def release(self) -> None:
         self.release_calls += 1
+
+    def consume_tokens(self, token_count: int) -> None:
+        self.consumed_tokens.append(token_count)
 
 
 class FakeErrorLogger:
@@ -124,6 +128,7 @@ def test_translation_task_hooks_handle_commit_payloads_updates_batch_and_progres
     translation.update_pipeline_progress.assert_called_once_with(
         {"line": 1, "total_line": 2}
     )
+    assert translation.task_limiter.consumed_tokens == [7]
 
 
 def test_translation_task_hooks_handle_commit_payloads_returns_retry_contexts() -> None:
@@ -186,6 +191,7 @@ def test_translation_task_hooks_handle_commit_payloads_merges_batch_statistics()
         output_tokens=10,
     )
     translation.apply_batch_update_sync.assert_called_once()
+    assert translation.task_limiter.consumed_tokens == [18]
     assert result.retry_contexts == ()
 
 

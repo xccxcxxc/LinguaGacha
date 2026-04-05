@@ -182,11 +182,12 @@ class ProjectService(Base):
         return ext in self.SUPPORTED_EXTENSIONS
 
     def get_relative_path(self, base_path: str, file_path: str) -> str:
-        return (
+        relative_path = (
             Path(file_path).name
             if Path(base_path).is_file()
             else str(Path(file_path).relative_to(base_path))
         )
+        return relative_path.replace("/", "\\")
 
     def get_project_preview(self, lg_path: str) -> dict:
         """获取工程预览信息（不完全加载）。"""
