@@ -101,14 +101,14 @@ class TranslationTask(Base):
     def build_recoverable_request_response(
         request_response: TaskRequestResult,
     ) -> TaskRequestResult:
-        """将可恢复异常归一成空响应，后续仍复用同一套落盘和校验流程。"""
+        """将可恢复异常归一成空响应，但保留已产生的 token 记账。"""
         return TaskRequestResult(
             start_time=request_response.start_time,
             exception=request_response.exception,
             response_think="",
             response_result="",
-            input_tokens=0,
-            output_tokens=0,
+            input_tokens=request_response.input_tokens,
+            output_tokens=request_response.output_tokens,
             normalized_think="",
             cleaned_response_result="",
             has_why_block=False,
@@ -303,7 +303,12 @@ class TranslationTask(Base):
                 input_tokens=request_response.input_tokens,
                 output_tokens=request_response.output_tokens,
             )
-        return self.build_empty_result()
+        # 即使整批都失败或待重试，这次请求已经真实消耗了额度，统计不能清零。
+        return self.build_result(
+            row_count=0,
+            input_tokens=request_response.input_tokens,
+            output_tokens=request_response.output_tokens,
+        )
 
     def request(
         self,

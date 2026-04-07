@@ -464,6 +464,8 @@ class TestTranslationTaskApplyResponseData:
         )
 
         assert result["row_count"] == 0
+        assert result["input_tokens"] == 1
+        assert result["output_tokens"] == 1
         assert captured["checks"] == [
             ResponseChecker.Error.FAIL_TIMEOUT,
             ResponseChecker.Error.FAIL_TIMEOUT,
@@ -493,6 +495,8 @@ class TestTranslationTaskApplyResponseData:
         )
 
         assert result["row_count"] == 0
+        assert result["input_tokens"] == 1
+        assert result["output_tokens"] == 1
         assert checker.calls[0]["stream_degraded"] is True
         assert checker.calls[0]["dsts"] == [""]
         assert task.items[0].get_retry_count() == 1
@@ -517,6 +521,8 @@ class TestTranslationTaskApplyResponseData:
         )
 
         assert result["row_count"] == 0
+        assert result["input_tokens"] == 1
+        assert result["output_tokens"] == 1
         assert task.items[0].get_retry_count() == 1
 
     def test_apply_response_data_stream_degraded_without_checker_for_multi_items(
@@ -556,6 +562,8 @@ class TestTranslationTaskApplyResponseData:
         )
 
         assert result["row_count"] == 0
+        assert result["input_tokens"] == 1
+        assert result["output_tokens"] == 1
         assert captured["checks"] == [
             ResponseChecker.Error.FAIL_DEGRADATION,
             ResponseChecker.Error.FAIL_DEGRADATION,
@@ -804,8 +812,8 @@ class TestTranslationTaskRequestAndStart:
         monkeypatch.setattr(
             task,
             "apply_response_data",
-            lambda prepared, request_response: (
-                captured.setdefault("args", (prepared, request_response))
+            lambda prepared, request_response: captured.setdefault(
+                "args", (prepared, request_response)
             ),
         )
 
@@ -815,8 +823,8 @@ class TestTranslationTaskRequestAndStart:
         assert prepared[expected_flag] is True
         assert request_response.normalized_think == ""
         assert request_response.cleaned_response_result == ""
-        assert request_response.input_tokens == 0
-        assert request_response.output_tokens == 0
+        assert request_response.input_tokens == 7
+        assert request_response.output_tokens == 8
         assert result == captured["args"]
 
     def test_request_logs_unknown_exception_and_returns_default(

@@ -47,6 +47,8 @@ class StreamStrategy(Protocol):
         self, session: StreamSession, state: Any
     ) -> tuple[str, str, int, int]: ...
 
+    def get_partial_usage(self, state: Any) -> tuple[int, int]: ...
+
 
 def safe_close_resource(resource: Any) -> None:
     """尽力关闭同步资源。

@@ -5,6 +5,7 @@ import json
 from contextlib import contextmanager
 from pathlib import Path
 
+import httpx
 from typing import Any
 from typing import Iterator
 from typing import cast
@@ -37,6 +38,7 @@ class FakeEngine:
 class FakeOpenAIEvent:
     type: str
     content: Any = None
+    chunk: Any = None
 
 
 @dataclasses.dataclass
@@ -1223,6 +1225,10 @@ def test_request_stream_with_strategy_runs_consume_and_finalize() -> None:
         ) -> tuple[str, str, int, int]:
             return "TH", "R", 1, len(state.items)
 
+        def get_partial_usage(self, state: Any) -> tuple[int, int]:
+            del state
+            return 0, 0
+
     out = requester.request_stream_with_strategy(
         client=object(),
         request_args={},
@@ -1230,6 +1236,54 @@ def test_request_stream_with_strategy_runs_consume_and_finalize() -> None:
         stop_checker=None,
     )
     assert out == ("TH", "R", 1, 1)
+
+
+def test_request_stream_with_strategy_attaches_partial_usage_on_error() -> None:
+    requester = TaskRequester(
+        Config(),
+        {
+            "api_format": Base.APIFormat.OPENAI,
+            "api_key": "k",
+            "api_url": "https://example.invalid",
+            "model_id": "m",
+        },
+    )
+
+    @dataclasses.dataclass
+    class Strategy:
+        def create_state(self) -> Any:
+            return self
+
+        @contextmanager
+        def build_stream_session(
+            self, client: Any, request_args: dict[str, Any]
+        ) -> Iterator[StreamSession]:
+            del client, request_args
+            yield StreamSession(iterator=["x"], close=lambda: None, finalize=None)
+
+        def handle_item(self, state: Any, item: Any) -> None:
+            del state, item
+            raise RuntimeError("boom")
+
+        def finalize(
+            self, session: StreamSession, state: Any
+        ) -> tuple[str, str, int, int]:
+            del session, state
+            return "", "", 0, 0
+
+        def get_partial_usage(self, state: Any) -> tuple[int, int]:
+            del state
+            return 3, 4
+
+    with pytest.raises(RuntimeError) as exc_info:
+        requester.request_stream_with_strategy(
+            client=object(),
+            request_args={},
+            strategy=Strategy(),
+            stop_checker=None,
+        )
+
+    assert requester.extract_partial_usage(exc_info.value) == (3, 4)
 
 
 def test_openai_strategy_integration_and_degradation_paths() -> None:
@@ -1266,6 +1320,34 @@ def test_openai_strategy_integration_and_degradation_paths() -> None:
     )
     assert (think, result, itok, otok) == ("", "OK", 1, 2)
     assert stream_ok.closed == 1
+
+    completion_no_usage = FakeOpenAICompletion(
+        choices=[FakeOpenAIChoice(FakeOpenAIMessage(content="OK"))],
+        usage=None,
+    )
+    stream_chunk_usage = FakeOpenAIStream(
+        events=[
+            FakeOpenAIEvent(
+                type="chunk",
+                chunk=dataclasses.make_dataclass("Chunk", [("usage", Any)])(
+                    FakeUsage(prompt_tokens=7, completion_tokens=8)
+                ),
+            ),
+            FakeOpenAIEvent(type="content.delta", content="hi"),
+        ],
+        final_completion=completion_no_usage,
+    )
+    client_chunk_usage = FakeOpenAIClient(stream_chunk_usage)
+
+    think_chunk, result_chunk, itok_chunk, otok_chunk = (
+        requester.request_stream_with_strategy(
+            client_chunk_usage,
+            request_args={},
+            strategy=TaskRequester.OpenAIStreamStrategy(requester),
+            stop_checker=None,
+        )
+    )
+    assert (think_chunk, result_chunk, itok_chunk, otok_chunk) == ("", "OK", 7, 8)
 
     completion_bad_usage = FakeOpenAICompletion(
         choices=[FakeOpenAIChoice(FakeOpenAIMessage(content="OK"))],
@@ -1332,6 +1414,97 @@ def test_openai_finalize_requires_finalize_callable() -> None:
     session = StreamSession(iterator=[], close=lambda: None, finalize=None)
     with pytest.raises(RuntimeError, match="missing finalize"):
         strategy.finalize(session, strategy.create_state())
+
+
+def test_request_openai_accumulates_partial_usage_across_retry() -> None:
+    requester = TaskRequester(
+        Config(),
+        {
+            "api_format": Base.APIFormat.OPENAI,
+            "api_key": "k",
+            "api_url": "https://example.invalid",
+            "model_id": "m",
+        },
+    )
+    partial_error = httpx.ReadTimeout("timeout")
+    requester.attach_partial_usage(
+        partial_error,
+        input_tokens=5,
+        output_tokens=6,
+    )
+
+    with patch(
+        "module.Engine.TaskRequester.TaskRequesterClientPool.get_client",
+        return_value=object(),
+    ):
+        with patch(
+            "module.Engine.TaskRequester.TaskRequesterClientPool.get_url",
+            return_value="u",
+        ):
+            with patch(
+                "module.Engine.TaskRequester.TaskRequesterClientPool.get_key",
+                return_value="k",
+            ):
+                with patch.object(
+                    requester,
+                    "request_stream_with_strategy",
+                    side_effect=[partial_error, ("TH", "R", 1, 2)],
+                ):
+                    with patch.object(
+                        requester, "sleep_before_retry", return_value=True
+                    ):
+                        err, think, result, itok, otok = requester.request_openai(
+                            [{"role": "user", "content": "U"}],
+                            {},
+                        )
+
+    assert err is None
+    assert (think, result, itok, otok) == ("TH", "R", 6, 8)
+
+
+def test_request_openai_returns_partial_usage_when_retry_exhausted() -> None:
+    requester = TaskRequester(
+        Config(),
+        {
+            "api_format": Base.APIFormat.OPENAI,
+            "api_key": "k",
+            "api_url": "https://example.invalid",
+            "model_id": "m",
+        },
+    )
+    requester.TRANSIENT_RETRY_LIMIT = 0
+    partial_error = httpx.ReadTimeout("timeout")
+    requester.attach_partial_usage(
+        partial_error,
+        input_tokens=9,
+        output_tokens=10,
+    )
+
+    with patch(
+        "module.Engine.TaskRequester.TaskRequesterClientPool.get_client",
+        return_value=object(),
+    ):
+        with patch(
+            "module.Engine.TaskRequester.TaskRequesterClientPool.get_url",
+            return_value="u",
+        ):
+            with patch(
+                "module.Engine.TaskRequester.TaskRequesterClientPool.get_key",
+                return_value="k",
+            ):
+                with patch.object(
+                    requester,
+                    "request_stream_with_strategy",
+                    side_effect=partial_error,
+                ):
+                    err, think, result, itok, otok = requester.request_openai(
+                        [{"role": "user", "content": "U"}],
+                        {},
+                    )
+
+    assert err is not None
+    assert "read timeout" in str(err)
+    assert (think, result, itok, otok) == ("", "", 9, 10)
 
 
 def test_anthropic_strategy_integration_and_variants() -> None:

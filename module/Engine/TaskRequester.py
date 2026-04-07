@@ -418,6 +418,73 @@ class TaskRequester(Base):
         detector = cls.DegradationDetector()
         return detector.feed(text)
 
+    @staticmethod
+    def extract_openai_usage_counts(usage: Any) -> tuple[int, int]:
+        try:
+            input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        except TypeError, ValueError:
+            input_tokens = 0
+
+        try:
+            output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        except TypeError, ValueError:
+            output_tokens = 0
+
+        return input_tokens, output_tokens
+
+    @staticmethod
+    def extract_anthropic_usage_counts(usage: Any) -> tuple[int, int]:
+        try:
+            input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+        except TypeError, ValueError:
+            input_tokens = 0
+
+        try:
+            output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        except TypeError, ValueError:
+            output_tokens = 0
+
+        return input_tokens, output_tokens
+
+    @staticmethod
+    def extract_google_usage_counts(usage: Any) -> tuple[int, int]:
+        try:
+            input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
+        except AttributeError, TypeError, ValueError:
+            input_tokens = 0
+
+        try:
+            total_token_count = int(getattr(usage, "total_token_count", 0) or 0)
+            output_tokens = total_token_count - input_tokens
+        except AttributeError, TypeError, ValueError:
+            output_tokens = 0
+
+        return input_tokens, output_tokens
+
+    @staticmethod
+    def attach_partial_usage(
+        exception: Exception,
+        *,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> None:
+        setattr(exception, "lingua_input_tokens", max(0, int(input_tokens)))
+        setattr(exception, "lingua_output_tokens", max(0, int(output_tokens)))
+
+    @staticmethod
+    def extract_partial_usage(exception: Exception) -> tuple[int, int]:
+        try:
+            input_tokens = int(getattr(exception, "lingua_input_tokens", 0) or 0)
+        except TypeError, ValueError:
+            input_tokens = 0
+
+        try:
+            output_tokens = int(getattr(exception, "lingua_output_tokens", 0) or 0)
+        except TypeError, ValueError:
+            output_tokens = 0
+
+        return max(0, input_tokens), max(0, output_tokens)
+
     @dataclasses.dataclass
     class DegradationDetector:
         """流式退化检测器。
@@ -517,6 +584,7 @@ class TaskRequester(Base):
         degradation_detector: "TaskRequester.DegradationDetector" = dataclasses.field(
             default_factory=lambda: TaskRequester.DegradationDetector()
         )
+        last_usage: Any = None
 
     class OpenAIStreamStrategy:
         def __init__(self, requester: "TaskRequester") -> None:
@@ -546,6 +614,11 @@ class TaskRequester(Base):
         def handle_item(
             self, state: "TaskRequester.OpenAIStreamState", item: Any
         ) -> None:
+            chunk = getattr(item, "chunk", None)
+            usage = getattr(chunk, "usage", None)
+            if usage is not None:
+                state.last_usage = usage
+
             event_type = getattr(item, "type", "")
             if event_type != "content.delta":
                 return
@@ -578,18 +651,17 @@ class TaskRequester(Base):
             ):
                 raise StreamDegradationError("degradation detected")
 
-            usage: Any = getattr(completion, "usage", None)
-            try:
-                input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
-            except TypeError, ValueError:
-                input_tokens = 0
-
-            try:
-                output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
-            except TypeError, ValueError:
-                output_tokens = 0
+            usage: Any = getattr(completion, "usage", None) or state.last_usage
+            input_tokens, output_tokens = self.requester.extract_openai_usage_counts(
+                usage
+            )
 
             return response_think, response_result, input_tokens, output_tokens
+
+        def get_partial_usage(
+            self, state: "TaskRequester.OpenAIStreamState"
+        ) -> tuple[int, int]:
+            return self.requester.extract_openai_usage_counts(state.last_usage)
 
     @dataclasses.dataclass
     class AnthropicStreamState:
@@ -664,17 +736,17 @@ class TaskRequester(Base):
                 raise StreamDegradationError("degradation detected")
 
             usage: Any = getattr(message, "usage", None)
-            try:
-                input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
-            except TypeError, ValueError:
-                input_tokens = 0
-
-            try:
-                output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-            except TypeError, ValueError:
-                output_tokens = 0
+            input_tokens, output_tokens = self.requester.extract_anthropic_usage_counts(
+                usage
+            )
 
             return response_think, response_result, input_tokens, output_tokens
+
+        def get_partial_usage(
+            self, state: "TaskRequester.AnthropicStreamState"
+        ) -> tuple[int, int]:
+            del state
+            return 0, 0
 
     @dataclasses.dataclass
     class GoogleStreamState:
@@ -747,20 +819,16 @@ class TaskRequester(Base):
             ):
                 raise StreamDegradationError("degradation detected")
 
-            last_usage: Any = state.last_usage
-            try:
-                input_tokens = int(last_usage.prompt_token_count)
-            except AttributeError, TypeError, ValueError:
-                input_tokens = 0
-
-            try:
-                total_token_count = int(last_usage.total_token_count)
-                prompt_token_count = int(last_usage.prompt_token_count)
-                output_tokens = total_token_count - prompt_token_count
-            except AttributeError, TypeError, ValueError:
-                output_tokens = 0
+            input_tokens, output_tokens = self.requester.extract_google_usage_counts(
+                state.last_usage
+            )
 
             return response_think, response_result, input_tokens, output_tokens
+
+        def get_partial_usage(
+            self, state: "TaskRequester.GoogleStreamState"
+        ) -> tuple[int, int]:
+            return self.requester.extract_google_usage_counts(state.last_usage)
 
     def request_stream_with_strategy(
         self,
@@ -782,8 +850,17 @@ class TaskRequester(Base):
             def on_item(item: Any) -> None:
                 strategy.handle_item(state, item)
 
-            StreamConsumer.consume(session, control, on_item=on_item)
-            return strategy.finalize(session, state)
+            try:
+                StreamConsumer.consume(session, control, on_item=on_item)
+                return strategy.finalize(session, state)
+            except Exception as e:
+                input_tokens, output_tokens = strategy.get_partial_usage(state)
+                self.attach_partial_usage(
+                    e,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
+                raise
 
     # ========== Sakura 请求 ==========
 
@@ -819,6 +896,8 @@ class TaskRequester(Base):
             return RequestCancelledError("stop requested"), "", "", 0, 0
 
         last_exception: Exception | None = None
+        total_input_tokens = 0
+        total_output_tokens = 0
         for attempt in range(self.TRANSIENT_RETRY_LIMIT + 1):
             client_request_id = self.build_client_request_id()
             try:
@@ -844,23 +923,48 @@ class TaskRequester(Base):
                     __class__.OpenAIStreamStrategy(self),
                     stop_checker=stop_checker,
                 )
+                total_input_tokens += input_tokens
+                total_output_tokens += output_tokens
                 break
             except Exception as e:
+                partial_input_tokens, partial_output_tokens = (
+                    self.extract_partial_usage(e)
+                )
+                total_input_tokens += partial_input_tokens
+                total_output_tokens += partial_output_tokens
                 classified_exception = self.classify_exception(e, client_request_id)
                 last_exception = classified_exception
                 if (
                     attempt >= self.TRANSIENT_RETRY_LIMIT
                     or not self.is_retryable_exception(e)
                 ):
-                    return classified_exception, "", "", 0, 0
+                    return (
+                        classified_exception,
+                        "",
+                        "",
+                        total_input_tokens,
+                        total_output_tokens,
+                    )
                 self.log_retryable_exception(e, classified_exception, attempt)
                 if not self.sleep_before_retry(
                     attempt=attempt,
                     stop_checker=stop_checker,
                 ):
-                    return RequestCancelledError("stop requested"), "", "", 0, 0
+                    return (
+                        RequestCancelledError("stop requested"),
+                        "",
+                        "",
+                        total_input_tokens,
+                        total_output_tokens,
+                    )
         else:
-            return last_exception or RuntimeError("request failed"), "", "", 0, 0
+            return (
+                last_exception or RuntimeError("request failed"),
+                "",
+                "",
+                total_input_tokens,
+                total_output_tokens,
+            )
 
         response_result = JSONTool.dumps(
             {
@@ -869,7 +973,13 @@ class TaskRequester(Base):
             },
         )
 
-        return None, response_think, response_result, input_tokens, output_tokens
+        return (
+            None,
+            response_think,
+            response_result,
+            total_input_tokens,
+            total_output_tokens,
+        )
 
     # ========== OpenAI 请求 ==========
 
@@ -930,6 +1040,8 @@ class TaskRequester(Base):
             return RequestCancelledError("stop requested"), "", "", 0, 0
 
         last_exception: Exception | None = None
+        total_input_tokens = 0
+        total_output_tokens = 0
         for attempt in range(self.TRANSIENT_RETRY_LIMIT + 1):
             client_request_id = self.build_client_request_id()
             try:
@@ -955,25 +1067,56 @@ class TaskRequester(Base):
                     __class__.OpenAIStreamStrategy(self),
                     stop_checker=stop_checker,
                 )
+                total_input_tokens += input_tokens
+                total_output_tokens += output_tokens
                 break
             except Exception as e:
+                partial_input_tokens, partial_output_tokens = (
+                    self.extract_partial_usage(e)
+                )
+                total_input_tokens += partial_input_tokens
+                total_output_tokens += partial_output_tokens
                 classified_exception = self.classify_exception(e, client_request_id)
                 last_exception = classified_exception
                 if (
                     attempt >= self.TRANSIENT_RETRY_LIMIT
                     or not self.is_retryable_exception(e)
                 ):
-                    return classified_exception, "", "", 0, 0
+                    return (
+                        classified_exception,
+                        "",
+                        "",
+                        total_input_tokens,
+                        total_output_tokens,
+                    )
                 self.log_retryable_exception(e, classified_exception, attempt)
                 if not self.sleep_before_retry(
                     attempt=attempt,
                     stop_checker=stop_checker,
                 ):
-                    return RequestCancelledError("stop requested"), "", "", 0, 0
+                    return (
+                        RequestCancelledError("stop requested"),
+                        "",
+                        "",
+                        total_input_tokens,
+                        total_output_tokens,
+                    )
         else:
-            return last_exception or RuntimeError("request failed"), "", "", 0, 0
+            return (
+                last_exception or RuntimeError("request failed"),
+                "",
+                "",
+                total_input_tokens,
+                total_output_tokens,
+            )
 
-        return None, response_think, response_result, input_tokens, output_tokens
+        return (
+            None,
+            response_think,
+            response_result,
+            total_input_tokens,
+            total_output_tokens,
+        )
 
     # ========== Google 请求 ==========
 
@@ -1166,7 +1309,8 @@ class TaskRequester(Base):
                 stop_checker=stop_checker,
             )
         except Exception as e:
-            return e, "", "", 0, 0
+            input_tokens, output_tokens = self.extract_partial_usage(e)
+            return e, "", "", input_tokens, output_tokens
 
         return None, response_think, response_result, input_tokens, output_tokens
 
@@ -1255,6 +1399,7 @@ class TaskRequester(Base):
                 stop_checker=stop_checker,
             )
         except Exception as e:
-            return e, "", "", 0, 0
+            input_tokens, output_tokens = self.extract_partial_usage(e)
+            return e, "", "", input_tokens, output_tokens
 
         return None, response_think, response_result, input_tokens, output_tokens
