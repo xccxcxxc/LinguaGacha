@@ -15,6 +15,18 @@ on:
         options:
           - "true"
           - "false"
+      build_key:
+        description: "构建标识，用于区分 tag 和安装包文件名，例如 main-chat 或 openai-responses-test"
+        required: false
+        default: ""
+      build_label:
+        description: "构建中文说明，会显示在 Release 和 Telegram 消息中"
+        required: false
+        default: ""
+      release_notes:
+        description: "Release 中文说明正文"
+        required: false
+        default: ""
 
 jobs:
   prepare:
@@ -26,6 +38,12 @@ jobs:
       macos_bundle_name: ${{ steps.app_meta.outputs.macos_bundle_name }}
       linux_desktop_name: ${{ steps.app_meta.outputs.linux_desktop_name }}
       linux_icon_name: ${{ steps.app_meta.outputs.linux_icon_name }}
+      build_key: ${{ steps.build_meta.outputs.build_key }}
+      asset_suffix: ${{ steps.build_meta.outputs.asset_suffix }}
+      tag_suffix: ${{ steps.build_meta.outputs.tag_suffix }}
+      release_label: ${{ steps.build_meta.outputs.release_label }}
+      release_name_suffix: ${{ steps.build_meta.outputs.release_name_suffix }}
+      release_body: ${{ steps.build_meta.outputs.release_body }}
 
     steps:
       - name: Checkout Repository
@@ -60,6 +78,49 @@ jobs:
           echo "macos_bundle_name=LinguaGacha.app" >> "$GITHUB_OUTPUT"
           echo "linux_desktop_name=linguagacha" >> "$GITHUB_OUTPUT"
           echo "linux_icon_name=linguagacha" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Build Meta
+        id: build_meta
+        shell: bash
+        env:
+          RAW_BUILD_KEY: ${{ inputs.build_key }}
+          BUILD_LABEL: ${{ inputs.build_label }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+          TARGET_REF: ${{ inputs.ref }}
+          VERSION: ${{ steps.check_version.outputs.version }}
+        run: |
+          build_key=$(printf '%s' "$RAW_BUILD_KEY" | tr -c 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*$//')
+          if [ -n "$build_key" ]; then
+            echo "build_key=$build_key" >> "$GITHUB_OUTPUT"
+            echo "asset_suffix=_$build_key" >> "$GITHUB_OUTPUT"
+            echo "tag_suffix=-$build_key" >> "$GITHUB_OUTPUT"
+          else
+            echo "build_key=" >> "$GITHUB_OUTPUT"
+            echo "asset_suffix=" >> "$GITHUB_OUTPUT"
+            echo "tag_suffix=" >> "$GITHUB_OUTPUT"
+          fi
+
+          release_label="$BUILD_LABEL"
+          if [ -z "$release_label" ]; then
+            release_label="$build_key"
+          fi
+          echo "release_label=$release_label" >> "$GITHUB_OUTPUT"
+          if [ -n "$release_label" ]; then
+            echo "release_name_suffix= - $release_label" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_name_suffix=" >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo "release_body<<EOF"
+            printf '构建说明：%s\n' "${release_label:-未填写}"
+            printf '目标 ref：%s\n' "$TARGET_REF"
+            printf '版本：%s\n' "$VERSION"
+            if [ -n "$RELEASE_NOTES" ]; then
+              printf '\n%s\n' "$RELEASE_NOTES"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
   build-windows:
     needs: prepare
@@ -107,22 +168,22 @@ jobs:
       - name: Compress Archive
         shell: pwsh
         run: |
-          Compress-Archive -Path .\dist\* -DestinationPath "${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path .\dist\* -DestinationPath "${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}.zip" -CompressionLevel Optimal -Force
 
       - name: Generate Windows ZIP SHA256
         shell: pwsh
         run: |
-          $zip = "${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}.zip"
+          $zip = "${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}.zip"
           $hash = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLower()
           "$hash  $zip" | Out-File -FilePath "$zip.sha256" -Encoding ascii
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_Windows
+          name: ${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}_Windows
           path: |
-            ${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}.zip
-            ${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}.zip.sha256
+            ${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}.zip
+            ${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}.zip.sha256
 
   build-macos:
     needs: prepare
@@ -178,9 +239,9 @@ jobs:
             --icon "${{ needs.prepare.outputs.macos_bundle_name }}" 150 190 \
             --hide-extension "${{ needs.prepare.outputs.macos_bundle_name }}" \
             --app-drop-link 450 185 \
-            "${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_macOS_${{ matrix.arch }}.dmg" \
+            "${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}_macOS_${{ matrix.arch }}.dmg" \
             "./dist/${{ needs.prepare.outputs.macos_bundle_name }}" || true
-          DMG_FILE="${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_macOS_${{ matrix.arch }}.dmg"
+          DMG_FILE="${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}_macOS_${{ matrix.arch }}.dmg"
           if [ ! -f "$DMG_FILE" ]; then
             echo "ERROR: DMG file not created: $DMG_FILE"
             exit 1
@@ -190,7 +251,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_macOS_${{ matrix.arch }}
+          name: ${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}_macOS_${{ matrix.arch }}
           path: "*.dmg"
 
   build-linux:
@@ -232,6 +293,7 @@ jobs:
       - name: Create AppImage
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          ASSET_SUFFIX: ${{ needs.prepare.outputs.asset_suffix }}
           APP_NAME: ${{ needs.prepare.outputs.app_name }}
           DIST_DIR_NAME: ${{ needs.prepare.outputs.dist_dir_name }}
           DESKTOP_NAME: ${{ needs.prepare.outputs.linux_desktop_name }}
@@ -269,12 +331,12 @@ jobs:
 
           wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool-x86_64.AppImage
-          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir "${APP_NAME}_${VERSION}_Linux_x86_64.AppImage"
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir "${APP_NAME}_${VERSION}${ASSET_SUFFIX}_Linux_x86_64.AppImage"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_Linux_x86_64
+          name: ${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}_Linux_x86_64
           path: "${{ needs.prepare.outputs.app_name }}_*.AppImage"
 
   create-release:
@@ -298,16 +360,17 @@ jobs:
       - name: Create Release And Upload Assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: MANUAL_BUILD_${{ needs.prepare.outputs.version }}
-          name: ${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}
+          tag_name: MANUAL_BUILD_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.tag_suffix }}
+          name: ${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.release_name_suffix }}
+          body: ${{ needs.prepare.outputs.release_body }}
           draft: true
           prerelease: false
           files: |
-            ./artifacts/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_Windows/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}.zip
-            ./artifacts/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_Windows/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}.zip.sha256
-            ./artifacts/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_macOS_x86_64/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_macOS_x86_64.dmg
-            ./artifacts/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_macOS_arm64/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_macOS_arm64.dmg
-            ./artifacts/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_Linux_x86_64/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}_Linux_x86_64.AppImage
+            ./artifacts/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}_Windows/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}.zip
+            ./artifacts/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}_Windows/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}.zip.sha256
+            ./artifacts/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}_macOS_x86_64/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}_macOS_x86_64.dmg
+            ./artifacts/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}_macOS_arm64/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}_macOS_arm64.dmg
+            ./artifacts/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}_Linux_x86_64/${{ needs.prepare.outputs.app_name }}_${{ needs.prepare.outputs.version }}${{ needs.prepare.outputs.asset_suffix }}_Linux_x86_64.AppImage
 
   notify:
     needs: [prepare, build-windows, build-macos, build-linux, create-release]
@@ -332,7 +395,9 @@ jobs:
             STATUS="failed"
           fi
           VERSION="${{ needs.prepare.outputs.version }}"
-          TEXT=$(printf '[GitHub] %s LinguaGacha build %s\nVersion: %s\nWindows/macOS/Linux: %s' "$ICON" "$STATUS" "$VERSION" "$BUILD_STATUS")
+          BUILD_LABEL="${{ needs.prepare.outputs.release_label }}"
+          TARGET_REF="${{ inputs.ref }}"
+          TEXT=$(printf '[GitHub] %s LinguaGacha build %s\nVersion: %s\nBuild: %s\nRef: %s\nWindows/macOS/Linux: %s' "$ICON" "$STATUS" "$VERSION" "${BUILD_LABEL:-未填写}" "$TARGET_REF" "$BUILD_STATUS")
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
             -d text="$TEXT" > /dev/null
