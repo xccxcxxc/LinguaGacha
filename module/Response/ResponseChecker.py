@@ -32,6 +32,10 @@ class ResponseChecker(Base):
         Error.LINE_ERROR_SIMILARITY,
     )
 
+    # 相似度检查只对有足够有效文本的行生效，避免短标签、变量名、纯保护片段误报。
+    SIMILARITY_MIN_EFFECTIVE_LENGTH: int = 4
+    SIMILARITY_THRESHOLD: float = 0.80
+
     # 重试次数阈值
     RETRY_COUNT_THRESHOLD: int = 2
 
@@ -142,10 +146,15 @@ class ResponseChecker(Base):
                 continue
 
             # 判断是否包含或相似
-            if self.config.check_similarity and (
-                src in dst
-                or dst in src
-                or TextHelper.check_similarity_by_jaccard(src, dst) > 0.80
+            if (
+                self.config.check_similarity
+                and self.can_run_similarity_check(src, dst)
+                and (
+                    src in dst
+                    or dst in src
+                    or TextHelper.check_similarity_by_jaccard(src, dst)
+                    > __class__.SIMILARITY_THRESHOLD
+                )
             ):
                 # 日翻中时，只有译文至少包含一个平假名或片假名字符时，才判断为 相似
                 if (
@@ -175,3 +184,43 @@ class ResponseChecker(Base):
 
         # 返回结果
         return checks
+
+    @classmethod
+    def get_similarity_effective_length(cls, text: str) -> int:
+        """计算用于相似度判断的有效文本长度，忽略空白和标点符号。"""
+        return sum(
+            1
+            for char in text
+            if not char.isspace() and not TextHelper.is_punctuation(char)
+        )
+
+    @classmethod
+    def can_check_similarity(cls, src: str, dst: str) -> bool:
+        """保护片段剥离后为空或过短时，不做相似度判断。"""
+        if src == "" or dst == "":
+            return False
+
+        src_length = cls.get_similarity_effective_length(src)
+        dst_length = cls.get_similarity_effective_length(dst)
+        return (
+            src_length >= cls.SIMILARITY_MIN_EFFECTIVE_LENGTH
+            and dst_length >= cls.SIMILARITY_MIN_EFFECTIVE_LENGTH
+        )
+
+    def can_run_similarity_check(self, src: str, dst: str) -> bool:
+        """普通短文本跳过相似度检查，但保留日韩译中时的原文脚本残留拦截。"""
+        if self.can_check_similarity(src, dst):
+            return True
+
+        if (
+            self.config.source_language == BaseLanguage.Enum.JA
+            and self.config.target_language == BaseLanguage.Enum.ZH
+        ):
+            return TextHelper.JA.any_hiragana(dst) or TextHelper.JA.any_katakana(dst)
+        elif (
+            self.config.source_language == BaseLanguage.Enum.KO
+            and self.config.target_language == BaseLanguage.Enum.ZH
+        ):
+            return TextHelper.KO.any_hangeul(dst)
+        else:
+            return False

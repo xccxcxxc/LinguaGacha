@@ -21,9 +21,9 @@ from module.Localizer.Localizer import Localizer
 
 
 class VersionManager(Base):
-    RELEASE_URL: str = "https://github.com/neavo/LinguaGacha/releases/latest"
+    RELEASE_URL: str = "https://github.com/xccxcxxc/LinguaGacha/releases/latest"
     RELEASE_API_URL: str = (
-        "https://api.github.com/repos/neavo/LinguaGacha/releases/latest"
+        "https://api.github.com/repos/xccxcxxc/LinguaGacha/releases/latest"
     )
 
     class Status(StrEnum):

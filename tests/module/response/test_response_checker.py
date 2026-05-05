@@ -209,6 +209,15 @@ class TestResponseCheckerCheckLines:
 
         assert checks == [ResponseChecker.Error.LINE_ERROR_SIMILARITY]
 
+    def test_check_lines_skips_similarity_for_short_unchanged_term(self) -> None:
+        checker = create_checker(
+            create_config(BaseLanguage.Enum.EN, BaseLanguage.Enum.ZH)
+        )
+
+        checks = checker.check_lines(["HP"], ["HP"], Item.TextType.NONE)
+
+        assert checks == [ResponseChecker.Error.NONE]
+
     def test_check_lines_returns_none_when_similarity_condition_not_met(self) -> None:
         checker = create_checker(
             create_config(BaseLanguage.Enum.EN, BaseLanguage.Enum.ZH)
@@ -315,6 +324,20 @@ class TestResponseCheckerCheckLines:
         checks = checker.check_lines(
             ["こんにちは<かな>"], ["中文<かな>"], Item.TextType.NONE
         )
+
+        assert checks == [ResponseChecker.Error.NONE]
+
+    def test_check_lines_skips_similarity_when_preserved_tokens_remove_all_text(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        install_fake_text_processor(monkeypatch, re.compile(r"<[^>]+>"))
+
+        checker = create_checker(
+            create_config(BaseLanguage.Enum.EN, BaseLanguage.Enum.ZH)
+        )
+
+        checks = checker.check_lines(["<name>"], ["<name>"], Item.TextType.NONE)
 
         assert checks == [ResponseChecker.Error.NONE]
 
