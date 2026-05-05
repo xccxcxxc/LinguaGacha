@@ -290,6 +290,7 @@ class LocalizerEN(LocalizerZH):
     model_basic_setting_page_thinking_low: str = "Low"
     model_basic_setting_page_thinking_medium: str = "Medium"
     model_basic_setting_page_thinking_high: str = "High"
+    model_basic_setting_page_thinking_xhigh: str = "Extra High"
     model_basic_setting_page_input_token_title: str = "Input Token Limit"
     model_basic_setting_page_input_token_content: str = "Maximum number of tokens for each task input"
     model_basic_setting_page_output_token_title: str = "Output Token Limit"

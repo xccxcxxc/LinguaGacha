@@ -38,6 +38,7 @@ class FakeEngine:
 class FakeOpenAIEvent:
     type: str
     content: Any = None
+    delta: Any = None
     chunk: Any = None
 
 
@@ -68,6 +69,31 @@ class FakeOpenAICompletion:
     usage: Any = None
 
 
+@dataclasses.dataclass
+class FakeOpenAIResponsesText:
+    text: Any
+    type: str = "output_text"
+
+
+@dataclasses.dataclass
+class FakeOpenAIResponsesReasoningPart:
+    text: Any
+
+
+@dataclasses.dataclass
+class FakeOpenAIResponsesItem:
+    type: str
+    content: Any = None
+    summary: Any = None
+
+
+@dataclasses.dataclass
+class FakeOpenAIResponse:
+    output_text: Any = ""
+    output: list[Any] = dataclasses.field(default_factory=list)
+    usage: Any = None
+
+
 class FakeContext:
     def __init__(self, value: Any) -> None:
         self.value = value
@@ -94,6 +120,9 @@ class FakeOpenAIStream:
     def get_final_completion(self) -> Any:
         return self.final_completion
 
+    def get_final_response(self) -> Any:
+        return self.final_completion
+
 
 class FakeOpenAICompletions:
     def __init__(self, stream_obj: Any) -> None:
@@ -110,9 +139,20 @@ class FakeOpenAIChat:
         self.completions = FakeOpenAICompletions(stream_obj)
 
 
+class FakeOpenAIResponses:
+    def __init__(self, stream_obj: Any) -> None:
+        self.stream_obj = stream_obj
+        self.calls: list[dict[str, Any]] = []
+
+    def stream(self, **request_args: Any) -> FakeContext:
+        self.calls.append(request_args)
+        return FakeContext(self.stream_obj)
+
+
 class FakeOpenAIClient:
     def __init__(self, stream_obj: Any) -> None:
         self.chat = FakeOpenAIChat(stream_obj)
+        self.responses = FakeOpenAIResponses(stream_obj)
 
 
 @dataclasses.dataclass
@@ -243,10 +283,12 @@ def test_should_use_max_completion_tokens_and_sdk_timeout() -> None:
         },
     )
     assert requester.should_use_max_completion_tokens() is True
+    assert requester.should_use_openai_responses_api() is True
     assert requester.get_sdk_timeout_seconds() == 15
 
     requester.api_url = "https://example.invalid"
     assert requester.should_use_max_completion_tokens() is False
+    assert requester.should_use_openai_responses_api() is False
 
 
 def test_build_extra_headers_merges_default_and_extra() -> None:
@@ -290,6 +332,36 @@ def test_extract_openai_think_and_result_plain_text() -> None:
     think, result = TaskRequester.extract_openai_think_and_result(msg)
     assert think == ""
     assert result == "OK"
+
+
+def test_extract_openai_responses_think_and_result() -> None:
+    response = FakeOpenAIResponse(
+        output_text="",
+        output=[
+            FakeOpenAIResponsesItem(
+                type="reasoning",
+                summary=[FakeOpenAIResponsesReasoningPart("TH")],
+            ),
+            FakeOpenAIResponsesItem(
+                type="message",
+                content=[FakeOpenAIResponsesText("OK")],
+            ),
+        ],
+    )
+
+    think, result = TaskRequester.extract_openai_responses_think_and_result(response)
+
+    assert think == "TH"
+    assert result == "OK"
+
+
+def test_extract_openai_usage_counts_supports_chat_and_responses_fields() -> None:
+    assert TaskRequester.extract_openai_usage_counts(
+        FakeUsage(prompt_tokens=1, completion_tokens=2)
+    ) == (1, 2)
+    assert TaskRequester.extract_openai_usage_counts(
+        FakeUsage(input_tokens=3, output_tokens=4)
+    ) == (3, 4)
 
 
 def test_has_output_degradation_empty_and_detected() -> None:
@@ -346,10 +418,12 @@ def test_generate_sakura_args_uses_correct_token_key_and_stream_options() -> Non
     [
         ("gpt-5", ThinkingLevel.OFF, {"reasoning_effort": "none"}),
         ("gpt-5", ThinkingLevel.LOW, {"reasoning_effort": "low"}),
+        ("gpt-5", ThinkingLevel.XHIGH, {"reasoning_effort": "xhigh"}),
         ("qwen3.5", ThinkingLevel.OFF, {"enable_thinking": False}),
         ("qwen3.5", ThinkingLevel.HIGH, {"enable_thinking": True}),
         ("doubao-seed-2-0", ThinkingLevel.OFF, {"reasoning_effort": "minimal"}),
         ("doubao-seed-2-0", ThinkingLevel.HIGH, {"reasoning_effort": "high"}),
+        ("doubao-seed-2-0", ThinkingLevel.XHIGH, {"reasoning_effort": "high"}),
         ("glm-4", ThinkingLevel.OFF, {"thinking": {"type": "disabled"}}),
         ("glm-4", ThinkingLevel.MEDIUM, {"thinking": {"type": "enabled"}}),
         ("unknown", ThinkingLevel.LOW, {}),
@@ -382,9 +456,64 @@ def test_generate_openai_args_thinking_variants(
 
 
 @pytest.mark.parametrize(
+    "model_id,thinking_level,expected",
+    [
+        ("gpt-5.4", ThinkingLevel.OFF, {"effort": "none"}),
+        (
+            "gpt-5.4",
+            ThinkingLevel.LOW,
+            {"effort": "low", "summary": "auto"},
+        ),
+        (
+            "gpt-5.4",
+            ThinkingLevel.XHIGH,
+            {"effort": "xhigh", "summary": "auto"},
+        ),
+    ],
+)
+def test_generate_openai_args_uses_responses_api_for_official_openai(
+    model_id: str, thinking_level: ThinkingLevel, expected: dict[str, str]
+) -> None:
+    requester = TaskRequester(
+        Config(),
+        {
+            "api_format": Base.APIFormat.OPENAI,
+            "api_key": "k",
+            "api_url": "https://api.openai.com/v1",
+            "model_id": model_id,
+            "thinking": {"level": thinking_level},
+            "threshold": {"output_token_limit": 7},
+            "request": {
+                "extra_body_custom_enable": True,
+                "extra_body": {"store": False},
+            },
+            "generation": {
+                "temperature_custom_enable": True,
+                "temperature": 0.2,
+                "presence_penalty_custom_enable": True,
+                "presence_penalty": 0.4,
+            },
+        },
+    )
+
+    result = requester.generate_openai_args(
+        [{"role": "system", "content": "S"}],
+        {"temperature": 0.2, "presence_penalty": 0.4},
+    )
+
+    assert result["input"] == [{"role": "system", "content": "S"}]
+    assert result["max_output_tokens"] == 7
+    assert result["reasoning"] == expected
+    assert result["extra_body"] == {"store": False}
+    assert result["temperature"] == 0.2
+    assert "messages" not in result
+    assert "presence_penalty" not in result
+
+
+@pytest.mark.parametrize(
     "api_url,token_key",
     [
-        ("https://api.openai.com/v1", "max_completion_tokens"),
+        ("https://api.openai.com/v1", "max_output_tokens"),
         ("https://example.invalid", "max_tokens"),
     ],
 )
@@ -407,11 +536,13 @@ def test_generate_openai_args_output_token_limit_strategy(
 
     requester.output_token_limit = TaskRequester.OUTPUT_TOKEN_LIMIT_AUTO
     result_unset = requester.generate_openai_args([], {})
+    assert "max_output_tokens" not in result_unset
     assert "max_completion_tokens" not in result_unset
     assert "max_tokens" not in result_unset
 
     requester.output_token_limit = TaskRequester.LEGACY_OUTPUT_TOKEN_LIMIT_AUTO
     result_legacy = requester.generate_openai_args([], {})
+    assert "max_output_tokens" not in result_legacy
     assert "max_completion_tokens" not in result_legacy
     assert "max_tokens" not in result_legacy
 
@@ -1145,6 +1276,58 @@ def test_request_openai_and_anthropic_success_paths(
     assert (think, result, itok, otok) == ("TH", "R", 1, 2)
 
 
+def test_request_openai_uses_responses_strategy_for_official_openai() -> None:
+    requester = TaskRequester(
+        Config(),
+        {
+            "api_format": Base.APIFormat.OPENAI,
+            "api_key": "k",
+            "api_url": "https://api.openai.com/v1",
+            "model_id": "gpt-5.4",
+        },
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_request_stream_with_strategy(
+        client: Any,
+        request_args: dict[str, Any],
+        strategy: Any,
+        *,
+        stop_checker: Any,
+    ) -> tuple[str, str, int, int]:
+        del client, stop_checker
+        captured["request_args"] = request_args
+        captured["strategy"] = strategy
+        return "TH", "R", 1, 2
+
+    with patch(
+        "module.Engine.TaskRequester.TaskRequesterClientPool.get_client",
+        return_value=object(),
+    ):
+        with patch(
+            "module.Engine.TaskRequester.TaskRequesterClientPool.get_key",
+            return_value="k",
+        ):
+            with patch.object(
+                requester,
+                "request_stream_with_strategy",
+                side_effect=fake_request_stream_with_strategy,
+            ):
+                err, think, result, itok, otok = requester.request_openai(
+                    [{"role": "user", "content": "U"}],
+                    {},
+                )
+
+    assert err is None
+    assert (think, result, itok, otok) == ("TH", "R", 1, 2)
+    assert isinstance(
+        captured["strategy"],
+        TaskRequester.OpenAIResponsesStreamStrategy,
+    )
+    assert "input" in captured["request_args"]
+    assert "messages" not in captured["request_args"]
+
+
 def test_request_google_passes_sorted_extra_headers_tuple_to_client_pool() -> None:
     requester = TaskRequester(
         Config(),
@@ -1396,6 +1579,63 @@ def test_openai_strategy_integration_and_degradation_paths() -> None:
             client_handle_degrade,
             request_args={},
             strategy=TaskRequester.OpenAIStreamStrategy(requester),
+            stop_checker=None,
+        )
+
+
+def test_openai_responses_strategy_integration_and_degradation_paths() -> None:
+    requester = TaskRequester(
+        Config(),
+        {
+            "api_format": Base.APIFormat.OPENAI,
+            "api_key": "k",
+            "api_url": "https://api.openai.com/v1",
+            "model_id": "gpt-5.4",
+        },
+    )
+
+    response_ok = FakeOpenAIResponse(
+        output_text="OK",
+        output=[
+            FakeOpenAIResponsesItem(
+                type="reasoning",
+                summary=[FakeOpenAIResponsesReasoningPart("TH")],
+            )
+        ],
+        usage=FakeUsage(input_tokens=1, output_tokens=2),
+    )
+    stream_ok = FakeOpenAIStream(
+        events=[
+            FakeOpenAIEvent(type="ignore"),
+            FakeOpenAIEvent(type="response.output_text.delta", content=None),
+            FakeOpenAIEvent(type="response.output_text.delta", delta="hi"),
+            FakeOpenAIEvent(type="response.reasoning_summary_text.delta", delta="TH"),
+        ],
+        final_completion=response_ok,
+    )
+    client_ok = FakeOpenAIClient(stream_ok)
+
+    think, result, itok, otok = requester.request_stream_with_strategy(
+        client_ok,
+        request_args={},
+        strategy=TaskRequester.OpenAIResponsesStreamStrategy(requester),
+        stop_checker=None,
+    )
+
+    assert (think, result, itok, otok) == ("TH", "OK", 1, 2)
+    assert stream_ok.closed == 1
+
+    response_degrade = FakeOpenAIResponse(
+        output_text="A" * 50,
+        usage=FakeUsage(input_tokens=0, output_tokens=0),
+    )
+    stream_degrade = FakeOpenAIStream(events=[], final_completion=response_degrade)
+    client_degrade = FakeOpenAIClient(stream_degrade)
+    with pytest.raises(StreamDegradationError):
+        requester.request_stream_with_strategy(
+            client_degrade,
+            request_args={},
+            strategy=TaskRequester.OpenAIResponsesStreamStrategy(requester),
             stop_checker=None,
         )
 
