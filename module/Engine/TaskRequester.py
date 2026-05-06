@@ -169,11 +169,8 @@ class TaskRequester(Base):
         return str(self.api_url).startswith("https://api.openai.com")
 
     def should_use_openai_responses_api(self) -> bool:
-        # 只把官方 OpenAI 地址切到 Responses，避免破坏 OpenAI 兼容厂商的 Chat Completions 实现。
-        if self.api_format != Base.APIFormat.OPENAI:
-            return False
-        normalized_url = TaskRequesterClientPool.get_url(self.api_url, self.api_format)
-        return normalized_url.startswith("https://api.openai.com")
+        # 该测试分支用于验证 OpenAI 兼容中转是否支持 Responses API。
+        return self.api_format == Base.APIFormat.OPENAI
 
     def apply_output_token_limit(self, args: dict[str, Any], token_key: str) -> None:
         if self.output_token_limit in (

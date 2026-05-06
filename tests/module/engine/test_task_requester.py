@@ -288,6 +288,9 @@ def test_should_use_max_completion_tokens_and_sdk_timeout() -> None:
 
     requester.api_url = "https://example.invalid"
     assert requester.should_use_max_completion_tokens() is False
+    assert requester.should_use_openai_responses_api() is True
+
+    requester.api_format = Base.APIFormat.ANTHROPIC
     assert requester.should_use_openai_responses_api() is False
 
 
@@ -429,7 +432,7 @@ def test_generate_sakura_args_uses_correct_token_key_and_stream_options() -> Non
         ("unknown", ThinkingLevel.LOW, {}),
     ],
 )
-def test_generate_openai_args_thinking_variants(
+def test_generate_openai_chat_args_thinking_variants(
     model_id: str, thinking_level: ThinkingLevel, expected: dict[str, Any]
 ) -> None:
     requester = TaskRequester(
@@ -448,7 +451,7 @@ def test_generate_openai_args_thinking_variants(
         },
     )
 
-    result = requester.generate_openai_args([], {})
+    result = requester.generate_openai_chat_args([], {})
     extra_body = result["extra_body"]
     for k, v in expected.items():
         assert extra_body[k] == v
@@ -471,7 +474,7 @@ def test_generate_openai_args_thinking_variants(
         ),
     ],
 )
-def test_generate_openai_args_uses_responses_api_for_official_openai(
+def test_generate_openai_args_uses_responses_api_for_openai_format(
     model_id: str, thinking_level: ThinkingLevel, expected: dict[str, str]
 ) -> None:
     requester = TaskRequester(
@@ -479,7 +482,7 @@ def test_generate_openai_args_uses_responses_api_for_official_openai(
         {
             "api_format": Base.APIFormat.OPENAI,
             "api_key": "k",
-            "api_url": "https://api.openai.com/v1",
+            "api_url": "https://example.invalid/v1",
             "model_id": model_id,
             "thinking": {"level": thinking_level},
             "threshold": {"output_token_limit": 7},
@@ -511,15 +514,13 @@ def test_generate_openai_args_uses_responses_api_for_official_openai(
 
 
 @pytest.mark.parametrize(
-    "api_url,token_key",
+    "api_url",
     [
-        ("https://api.openai.com/v1", "max_output_tokens"),
-        ("https://example.invalid", "max_tokens"),
+        "https://api.openai.com/v1",
+        "https://example.invalid",
     ],
 )
-def test_generate_openai_args_output_token_limit_strategy(
-    api_url: str, token_key: str
-) -> None:
+def test_generate_openai_args_output_token_limit_strategy(api_url: str) -> None:
     requester = TaskRequester(
         Config(),
         {
@@ -532,7 +533,9 @@ def test_generate_openai_args_output_token_limit_strategy(
     )
 
     result = requester.generate_openai_args([], {})
-    assert result[token_key] == 7
+    assert result["max_output_tokens"] == 7
+    assert "max_completion_tokens" not in result
+    assert "max_tokens" not in result
 
     requester.output_token_limit = TaskRequester.OUTPUT_TOKEN_LIMIT_AUTO
     result_unset = requester.generate_openai_args([], {})
@@ -1276,13 +1279,13 @@ def test_request_openai_and_anthropic_success_paths(
     assert (think, result, itok, otok) == ("TH", "R", 1, 2)
 
 
-def test_request_openai_uses_responses_strategy_for_official_openai() -> None:
+def test_request_openai_uses_responses_strategy_for_openai_format() -> None:
     requester = TaskRequester(
         Config(),
         {
             "api_format": Base.APIFormat.OPENAI,
             "api_key": "k",
-            "api_url": "https://api.openai.com/v1",
+            "api_url": "https://example.invalid/v1",
             "model_id": "gpt-5.4",
         },
     )
