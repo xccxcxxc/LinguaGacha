@@ -12,6 +12,7 @@ from qfluentwidgets import SingleDirectionScrollArea
 from base.Base import Base
 from base.BaseIcon import BaseIcon
 from frontend.Model.ModelSelectorPage import ModelSelectorPage
+from model.Model import ThinkingLevel
 from module.Config import Config
 from module.Engine.Engine import Engine
 from module.Localizer.Localizer import Localizer
@@ -322,21 +323,35 @@ class ModelBasicSettingPage(Base, MessageBoxBase):
                 Localizer.get().model_basic_setting_page_thinking_low,
                 Localizer.get().model_basic_setting_page_thinking_medium,
                 Localizer.get().model_basic_setting_page_thinking_high,
+                Localizer.get().model_basic_setting_page_thinking_xhigh,
             ]
         )
 
         # 设置当前值
         thinking = self.model.get("thinking", {})
         current_level = thinking.get("level", "OFF")
-        level_to_index = {"OFF": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3}
+        thinking_levels = [
+            ThinkingLevel.OFF,
+            ThinkingLevel.LOW,
+            ThinkingLevel.MEDIUM,
+            ThinkingLevel.HIGH,
+            ThinkingLevel.XHIGH,
+        ]
+        level_to_index = {
+            level.value: index for index, level in enumerate(thinking_levels)
+        }
         combo_box.setCurrentIndex(level_to_index.get(current_level, 0))
 
         def on_current_index_changed(index: int) -> None:
             config = Config().load()
-            index_to_level = {0: "OFF", 1: "LOW", 2: "MEDIUM", 3: "HIGH"}
             if "thinking" not in self.model:
                 self.model["thinking"] = {}
-            self.model["thinking"]["level"] = index_to_level.get(index, "OFF")
+            level = (
+                thinking_levels[index]
+                if 0 <= index < len(thinking_levels)
+                else ThinkingLevel.OFF
+            )
+            self.model["thinking"]["level"] = level.value
             config.set_model(self.model)
             config.save()
 

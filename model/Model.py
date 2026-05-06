@@ -21,6 +21,7 @@ class ThinkingLevel(StrEnum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
+    XHIGH = "XHIGH"
 
 
 @dataclass
