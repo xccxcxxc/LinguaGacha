@@ -290,6 +290,9 @@ def test_should_use_max_completion_tokens_and_sdk_timeout() -> None:
     assert requester.should_use_max_completion_tokens() is False
     assert requester.should_use_openai_responses_api() is True
 
+    requester.api_format = Base.APIFormat.SAKURALLM
+    assert requester.should_use_openai_responses_api() is True
+
     requester.api_format = Base.APIFormat.ANTHROPIC
     assert requester.should_use_openai_responses_api() is False
 
@@ -386,7 +389,7 @@ def test_degradation_detector_covers_single_alternating_and_period3() -> None:
     assert detector3.feed("ABC" * 60) is True
 
 
-def test_generate_sakura_args_uses_correct_token_key_and_stream_options() -> None:
+def test_generate_sakura_args_uses_responses_shape_for_compatible_format() -> None:
     cfg = Config()
     requester = TaskRequester(
         cfg,
@@ -399,21 +402,15 @@ def test_generate_sakura_args_uses_correct_token_key_and_stream_options() -> Non
         },
     )
 
-    result = requester.generate_sakura_args([], {})
-    assert result["max_completion_tokens"] == 10
-    assert result["stream_options"] == {"include_usage": True}
-
-    requester.api_url = "https://example.invalid"
-    result2 = requester.generate_sakura_args(
-        [], {"stream_options": {"include_usage": False}}
-    )
-    assert result2["max_tokens"] == 10
-    assert result2["stream_options"] == {"include_usage": False}
+    result = requester.generate_sakura_args([{"role": "user", "content": "U"}], {})
+    assert result["max_output_tokens"] == 10
+    assert result["input"] == [{"role": "user", "content": "U"}]
+    assert "messages" not in result
+    assert "stream_options" not in result
 
     requester.output_token_limit = TaskRequester.OUTPUT_TOKEN_LIMIT_AUTO
     result3 = requester.generate_sakura_args([], {})
-    assert "max_completion_tokens" not in result3
-    assert "max_tokens" not in result3
+    assert "max_output_tokens" not in result3
 
 
 @pytest.mark.parametrize(
@@ -1176,6 +1173,69 @@ def test_request_sakura_success_wraps_lines_into_json() -> None:
     assert think == "TH"
     assert result == "D"
     assert (itok, otok) == (1, 2)
+    assert dumped["obj"] == {"0": "a", "1": "b"}
+
+
+def test_request_sakura_uses_responses_strategy_for_compatible_format() -> None:
+    requester = TaskRequester(
+        Config(),
+        {
+            "api_format": Base.APIFormat.SAKURALLM,
+            "api_key": "k",
+            "api_url": "https://example.invalid/v1",
+            "model_id": "no_model_required",
+        },
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_request_stream_with_strategy(
+        client: Any,
+        request_args: dict[str, Any],
+        strategy: Any,
+        *,
+        stop_checker: Any,
+    ) -> tuple[str, str, int, int]:
+        del client, stop_checker
+        captured["request_args"] = request_args
+        captured["strategy"] = strategy
+        return "TH", "a\nb", 1, 2
+
+    with patch(
+        "module.Engine.TaskRequester.TaskRequesterClientPool.get_client",
+        return_value=object(),
+    ):
+        with patch(
+            "module.Engine.TaskRequester.TaskRequesterClientPool.get_key",
+            return_value="k",
+        ):
+            with patch.object(
+                requester,
+                "request_stream_with_strategy",
+                side_effect=fake_request_stream_with_strategy,
+            ):
+                dumped: dict[str, Any] = {}
+
+                def fake_dumps(obj: Any) -> str:
+                    dumped["obj"] = obj
+                    return "D"
+
+                with patch(
+                    "module.Engine.TaskRequester.JSONTool.dumps",
+                    side_effect=fake_dumps,
+                ):
+                    err, think, result, itok, otok = requester.request_sakura(
+                        [{"role": "user", "content": "U"}],
+                        {},
+                    )
+
+    assert err is None
+    assert (think, result, itok, otok) == ("TH", "D", 1, 2)
+    assert isinstance(
+        captured["strategy"],
+        TaskRequester.OpenAIResponsesStreamStrategy,
+    )
+    assert "input" in captured["request_args"]
+    assert "messages" not in captured["request_args"]
     assert dumped["obj"] == {"0": "a", "1": "b"}
 
 

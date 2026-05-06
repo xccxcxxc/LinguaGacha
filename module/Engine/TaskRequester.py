@@ -116,6 +116,13 @@ class TaskRequester(Base):
             "top_p",
         }
     )
+    # 测试分支需要覆盖所有由 OpenAI SDK 驱动的兼容接口，而不只是真正的 OpenAI 格式。
+    OPENAI_RESPONSES_API_FORMATS: frozenset[str] = frozenset(
+        {
+            Base.APIFormat.OPENAI,
+            Base.APIFormat.SAKURALLM,
+        }
+    )
 
     def __init__(self, config: Config, model: dict) -> None:
         super().__init__()
@@ -170,7 +177,7 @@ class TaskRequester(Base):
 
     def should_use_openai_responses_api(self) -> bool:
         # 该测试分支用于验证 OpenAI 兼容中转是否支持 Responses API。
-        return self.api_format == Base.APIFormat.OPENAI
+        return self.api_format in self.OPENAI_RESPONSES_API_FORMATS
 
     def apply_output_token_limit(self, args: dict[str, Any], token_key: str) -> None:
         if self.output_token_limit in (
@@ -1050,6 +1057,10 @@ class TaskRequester(Base):
     def generate_sakura_args(
         self, messages: list[dict[str, str]], args: dict[str, Any]
     ) -> dict:
+        if self.should_use_openai_responses_api():
+            # SakuraLLM 入口本质仍由 OpenAI SDK 发请求，测试分支需强制验证 /responses。
+            return self.generate_openai_responses_args(messages, args)
+
         result: dict[str, Any] = dict(args)
         token_key = (
             "max_completion_tokens"
@@ -1103,7 +1114,11 @@ class TaskRequester(Base):
                 ) = self.request_stream_with_strategy(
                     client,
                     request_args,
-                    __class__.OpenAIStreamStrategy(self),
+                    (
+                        __class__.OpenAIResponsesStreamStrategy(self)
+                        if self.should_use_openai_responses_api()
+                        else __class__.OpenAIStreamStrategy(self)
+                    ),
                     stop_checker=stop_checker,
                 )
                 total_input_tokens += input_tokens
