@@ -32,10 +32,10 @@ MODEL_ID_ACTION_BUTTON_WIDTH: int = 80  # 模型标识：操作按钮宽度
 
 class ModelBasicSettingPage(Base, MessageBoxBase):
     THINKING_SUPPORT_URL_ZH: str = (
-        "https://github.com/neavo/LinguaGacha/wiki/ThinkingLevelSupport"
+        "https://github.com/xccxcxxc/LinguaGacha/wiki/ThinkingLevelSupport"
     )
     THINKING_SUPPORT_URL_EN: str = (
-        "https://github.com/neavo/LinguaGacha/wiki/ThinkingLevelSupportEN"
+        "https://github.com/xccxcxxc/LinguaGacha/wiki/ThinkingLevelSupportEN"
     )
 
     def __init__(self, model_id: str, window: FluentWindow) -> None:

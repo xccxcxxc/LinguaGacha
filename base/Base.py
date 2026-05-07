@@ -6,7 +6,7 @@ from base.EventManager import EventManager
 
 class Base:
     APP_NAME: str = "LinguaGacha"
-    REPO_URL: str = "https://github.com/neavo/LinguaGacha"
+    REPO_URL: str = "https://github.com/xccxcxxc/LinguaGacha"
     USER_AGENT_NAME: str = "LinguaGacha"
 
     # 翻译/分析事件速查表（优先看这里）：

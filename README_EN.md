@@ -1,5 +1,5 @@
 <div align=center><img src="https://github.com/user-attachments/assets/cdf990fb-cf03-4370-a402-844f87b2fab8" width="256px;"></div>
-<div align=center><img src="https://img.shields.io/github/v/release/neavo/LinguaGacha"/>   <img src="https://img.shields.io/github/license/neavo/LinguaGacha"/>   <img src="https://img.shields.io/github/stars/neavo/LinguaGacha"/></div>
+<div align=center><img src="https://img.shields.io/github/v/release/xccxcxxc/LinguaGacha"/>   <img src="https://img.shields.io/github/license/xccxcxxc/LinguaGacha"/>   <img src="https://img.shields.io/github/stars/xccxcxxc/LinguaGacha"/></div>
 <p align='center'>Next-generation text translator utilizing AI capabilities for one-click translation of novels, games, subtitles, and more</p>
 
 &ensp;
@@ -9,7 +9,7 @@
 - [ [中文](./README.md) ] | [ [English](./README_EN.md) ] | [ [日本語](./README_JA.md) ]
 
 ## Overview 📢
-- [LinguaGacha](https://github.com/neavo/LinguaGacha) (/ˈlɪŋɡwə ˈɡɑːtʃə/), is an AI-powered next-generation text translator
+- [LinguaGacha](https://github.com/xccxcxxc/LinguaGacha) (/ˈlɪŋɡwə ˈɡɑːtʃə/), is an AI-powered next-generation text translator
 - Out of the box, (almost) no setup needed, powerful does not need to be shown through complicated setting options
 - Supports one-click translation between 16 languages
   - including `Chinese`, `English`, `Japanese`, `Korean`, `Russian`, `German`, `French`, `Italian`, etc
@@ -21,8 +21,8 @@
 > <img src="https://github.com/user-attachments/assets/c0d7e898-f6fa-432f-a3cd-e231b657c4b5" style="width: 80%;">
 
 ## Special Notice ⚠️
-- If you use [LinguaGacha](https://github.com/neavo/LinguaGacha) during translation, please include clear attribution in prominent locations of your work's information or release pages!
-- For projects involving commercial activities or profits, please contact the author for authorization before using [LinguaGacha](https://github.com/neavo/LinguaGacha)!
+- If you use [LinguaGacha](https://github.com/xccxcxxc/LinguaGacha) during translation, please include clear attribution in prominent locations of your work's information or release pages!
+- For projects involving commercial activities or profits, please contact the author for authorization before using [LinguaGacha](https://github.com/xccxcxxc/LinguaGacha)!
 
 ## Feature Advantages 📌
 - Ultra-fast translation speed: subtitles in ten seconds, novels in one minute, games in five minutes
@@ -36,7 +36,7 @@
 - Compatible with AI model interfaces following `OpenAI`, `Google`, `Anthropic`, `SakuraLLM` standards
 
 ## Basic Workflow 🛸
-- Download application from [Releases page](https://github.com/neavo/LinguaGacha/releases)
+- Download application from [Releases page](https://github.com/xccxcxxc/LinguaGacha/releases)
   - Windows: Download `.zip` file, extract and run `app.exe`
   - macOS: Download `.dmg` file, choose `x86_64` for Intel or `arm64` for Apple Silicon, drag to Applications folder
     - On first launch, you may see "unidentified developer" warning
@@ -45,7 +45,7 @@
     - Make it executable and run `chmod +x LinguaGacha*.AppImage && ./LinguaGacha*.AppImage`
 - Obtain a reliable AI model interface (choose one):
   - [ [Local API](https://github.com/neavo/OneClickLLAMA) ] (Free, requires ≥8GB VRAM GPU, Nvidia recommended)
-  - [ [DeepSeek API](https://github.com/neavo/LinguaGacha/wiki/DeepSeek) ] (Paid, cost-effective, fast, high-quality, no GPU required)　`👈👈 Recommended`
+  - [ [DeepSeek API](https://github.com/xccxcxxc/LinguaGacha/wiki/DeepSeek) ] (Paid, cost-effective, fast, high-quality, no GPU required)　`👈👈 Recommended`
 - Prepare source text:
   - `Subtitles`/`E-books` typically require no preprocessing
   - `Game texts` need extraction using appropriate tools for specific game engines
@@ -55,17 +55,17 @@
 
 ## User Guide 📝
 - Overall
-  - [Basic Tutorial](https://github.com/neavo/LinguaGacha/wiki/BasicTutorial)　`👈👈 Step-by-step tutorial, easy to follow, a must-read for beginners`
-  - [Best Practices for High-Quality Translation of WOLF Engine Games](https://github.com/neavo/LinguaGacha/wiki/BestPracticeForWOLFEN)
-  - [Best Practices for High-Quality Translation of RPGMaker Series Engine Games](https://github.com/neavo/LinguaGacha/wiki/BestPracticeForRPGMakerEN)
+  - [Basic Tutorial](https://github.com/xccxcxxc/LinguaGacha/wiki/BasicTutorial)　`👈👈 Step-by-step tutorial, easy to follow, a must-read for beginners`
+  - [Best Practices for High-Quality Translation of WOLF Engine Games](https://github.com/xccxcxxc/LinguaGacha/wiki/BestPracticeForWOLFEN)
+  - [Best Practices for High-Quality Translation of RPGMaker Series Engine Games](https://github.com/xccxcxxc/LinguaGacha/wiki/BestPracticeForRPGMakerEN)
 - Video Tutorial
   - [How to Translate RPGMV with LinguaGacha and Translator++ (English)](https://www.youtube.com/watch?v=NbpyL2fMgDc)
 - Feature Description
-  - [CLI Mode](https://github.com/neavo/LinguaGacha/wiki/CLIModeEN)
-  - [Glossary](https://github.com/neavo/LinguaGacha/wiki/GlossaryEN)　　[Text Preserve](https://github.com/neavo/LinguaGacha/wiki/TextPreserveEN)　　[Text Replacement](https://github.com/neavo/LinguaGacha/wiki/ReplacementEN)
-  - [Force Thinking](https://github.com/neavo/LinguaGacha/wiki/ForceThinkingEN)　　[MTool Optimizer](https://github.com/neavo/LinguaGacha/wiki/MToolOptimizerEN)
-  - [TS Conversion](https://github.com/neavo/LinguaGacha/wiki/TSConversionEN) [Name-Field Extraction](https://github.com/neavo/LinguaGacha/wiki/NameFieldExtractionEN)
-  - You can find more details on each feature in the [Wiki](https://github.com/neavo/LinguaGacha/wiki), and you are welcome to share your experience in the [Discussions](https://github.com/neavo/LinguaGacha/discussions)
+  - [CLI Mode](https://github.com/xccxcxxc/LinguaGacha/wiki/CLIModeEN)
+  - [Glossary](https://github.com/xccxcxxc/LinguaGacha/wiki/GlossaryEN)　　[Text Preserve](https://github.com/xccxcxxc/LinguaGacha/wiki/TextPreserveEN)　　[Text Replacement](https://github.com/xccxcxxc/LinguaGacha/wiki/ReplacementEN)
+  - [Force Thinking](https://github.com/xccxcxxc/LinguaGacha/wiki/ForceThinkingEN)　　[MTool Optimizer](https://github.com/xccxcxxc/LinguaGacha/wiki/MToolOptimizerEN)
+  - [TS Conversion](https://github.com/xccxcxxc/LinguaGacha/wiki/TSConversionEN) [Name-Field Extraction](https://github.com/xccxcxxc/LinguaGacha/wiki/NameFieldExtractionEN)
+  - You can find more details on each feature in the [Wiki](https://github.com/xccxcxxc/LinguaGacha/wiki), and you are welcome to share your experience in the [Discussions](https://github.com/xccxcxxc/LinguaGacha/discussions)
 
 ## Supported Formats 🏷️
 - Processes all supported files in input folder (including subdirectories):
@@ -79,7 +79,7 @@
   - [Translator++](https://dreamsavior.net/translator-plusplus) project (.trans)
   - [Translator++](https://dreamsavior.net/translator-plusplus) exports (.xlsx)
   - [WOLF Official Translation Tool](https://silversecond.booth.pm/items/5151747) exports (.xlsx)
-- See [Wiki - Supported Formats](https://github.com/neavo/LinguaGacha/wiki/%E6%94%AF%E6%8C%81%E7%9A%84%E6%96%87%E4%BB%B6%E6%A0%BC%E5%BC%8F) for examples. Submit format requests via [ISSUES](https://github.com/neavo/LinguaGacha/issues)
+- See [Wiki - Supported Formats](https://github.com/xccxcxxc/LinguaGacha/wiki/%E6%94%AF%E6%8C%81%E7%9A%84%E6%96%87%E4%BB%B6%E6%A0%BC%E5%BC%8F) for examples. Submit format requests via [ISSUES](https://github.com/xccxcxxc/LinguaGacha/issues)
 
 ## Recent Updates 📅
 - 20260320 v0.60.1
@@ -96,7 +96,7 @@
 - Install dependencies `uv sync -U`
 - Run application `uv run app.py`
 - Please ensure you run `uv run ruff check --fix` and `uv run ruff format` to maintain code standards before submitting a PR
-- For non-developers, please download the packaged version directly from the [Releases page](https://github.com/neavo/LinguaGacha/releases)
+- For non-developers, please download the packaged version directly from the [Releases page](https://github.com/xccxcxxc/LinguaGacha/releases)
 
 ## Support 😥
 - Runtime logs are stored in `log` folder

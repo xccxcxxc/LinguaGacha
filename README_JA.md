@@ -1,5 +1,5 @@
 <div align=center><img src="https://github.com/user-attachments/assets/de19ec3f-246c-432d-9636-ff16f82b094e" width="256px;"></div>
-<div align=center><img src="https://img.shields.io/github/v/release/neavo/LinguaGacha"/>   <img src="https://img.shields.io/github/license/neavo/LinguaGacha"/>   <img src="https://img.shields.io/github/stars/neavo/LinguaGacha"/></div>
+<div align=center><img src="https://img.shields.io/github/v/release/xccxcxxc/LinguaGacha"/>   <img src="https://img.shields.io/github/license/xccxcxxc/LinguaGacha"/>   <img src="https://img.shields.io/github/stars/xccxcxxc/LinguaGacha"/></div>
 <p align='center'>AIの能力を活用して小説、ゲーム、字幕などのテキストをワンクリックで翻訳する次世代のテキスト翻訳ツール</p>
 
 &ensp;
@@ -9,7 +9,7 @@
 - [ [中文](./README.md) ] | [ [English](./README_EN.md) ] | [ [日本語](./README_JA.md) ]
 
 ## 概要 📢
-- [LinguaGacha](https://github.com/neavo/LinguaGacha) (/ˈlɪŋɡwə ˈɡɑːtʃə/)、AIを活用した次世代のテキスト翻訳ツールです
+- [LinguaGacha](https://github.com/xccxcxxc/LinguaGacha) (/ˈlɪŋɡwə ˈɡɑːtʃə/)、AIを活用した次世代のテキスト翻訳ツールです
 - 箱から出してすぐに使え、（ほぼ）設定不要。機能の強力さは、煩雑な設定を必要としません。
 - `中国語`、`英語`、`日本語`、`韓国語`、`ロシア語`、`ドイツ語`、`フランス語`、`イタリア語`など 16 言語にワンタッチ双方向翻訳対応。
 - `字幕`、`電子書籍`、`ゲームテキストなど`、色々なテキストタイプと形式に対応。
@@ -20,8 +20,8 @@
 > <img src="https://github.com/user-attachments/assets/c0d7e898-f6fa-432f-a3cd-e231b657c4b5" style="width: 80%;">
 
 ## 特別なお知らせ ⚠️
-- 翻訳中に [LinguaGacha](https://github.com/neavo/LinguaGacha) を使用する場合は、作品の情報やリリースページの目立つ場所に明確な帰属を含めてください！
-- 商業活動や利益を伴うプロジェクトの場合は、[LinguaGacha](https://github.com/neavo/LinguaGacha) を使用する前に、著者に連絡して許可を得てください！
+- 翻訳中に [LinguaGacha](https://github.com/xccxcxxc/LinguaGacha) を使用する場合は、作品の情報やリリースページの目立つ場所に明確な帰属を含めてください！
+- 商業活動や利益を伴うプロジェクトの場合は、[LinguaGacha](https://github.com/xccxcxxc/LinguaGacha) を使用する前に、著者に連絡して許可を得てください！
 
 ## 機能の利点 📌
 - 圧倒的な翻訳速度、10秒で字幕1本、1分で小説1冊、5分でゲーム1本
@@ -35,7 +35,7 @@
 - `OpenAI`、`Google`、`Anthropic`、`SakuraLLM` 標準に準拠したAIモデルインターフェースに対応
 
 ## ワークフロー 🛸
-- [リリースページ](https://github.com/neavo/LinguaGacha/releases) からアプリケーションをダウンロード
+- [リリースページ](https://github.com/xccxcxxc/LinguaGacha/releases) からアプリケーションをダウンロード
   - Windows: `.zip` ファイルをダウンロードし、解凍して `app.exe` を実行
   - macOS: `.dmg` ファイルをダウンロード、Intel は `x86_64`、Apple Silicon は `arm64`、アプリケーションフォルダにドラッグ
     - 初回起動時に「開発元を確認できない」という警告が表示される場合があります
@@ -44,7 +44,7 @@
     - 実行権限を付与して実行 `chmod +x LinguaGacha*.AppImage && ./LinguaGacha*.AppImage`
 - 信頼できるAIモデルインターフェースを取得（以下のいずれかを選択）：
   - [ [Local API](https://github.com/neavo/OneClickLLAMA) ] (無料、8GB以上のVRAM GPUが必要、Nvidia推奨)
-  - [ [DeepSeek API](https://github.com/neavo/LinguaGacha/wiki/DeepSeek) ] (有料、費用対効果が高い、高速、高品質、GPU不要)　`👈👈 推奨`
+  - [ [DeepSeek API](https://github.com/xccxcxxc/LinguaGacha/wiki/DeepSeek) ] (有料、費用対効果が高い、高速、高品質、GPU不要)　`👈👈 推奨`
 - ソーステキストを準備：
   - `字幕`/`電子書籍`は通常、前処理が不要
   - `ゲームテキスト`は特定のゲームエンジンに適したツールを使用して抽出が必要
@@ -54,17 +54,17 @@
 
 ## 使い方チュートリアル - English 📝
 - Overall
-  - [Basic Tutorial](https://github.com/neavo/LinguaGacha/wiki/BasicTutorial)　`👈👈 Step-by-step tutorial, easy to follow, a must-read for beginners`
-  - [Best Practices for High-Quality Translation of WOLF Engine Games](https://github.com/neavo/LinguaGacha/wiki/BestPracticeForWOLFEN)
-  - [Best Practices for High-Quality Translation of RPGMaker Series Engine Games](https://github.com/neavo/LinguaGacha/wiki/BestPracticeForRPGMakerEN)
+  - [Basic Tutorial](https://github.com/xccxcxxc/LinguaGacha/wiki/BasicTutorial)　`👈👈 Step-by-step tutorial, easy to follow, a must-read for beginners`
+  - [Best Practices for High-Quality Translation of WOLF Engine Games](https://github.com/xccxcxxc/LinguaGacha/wiki/BestPracticeForWOLFEN)
+  - [Best Practices for High-Quality Translation of RPGMaker Series Engine Games](https://github.com/xccxcxxc/LinguaGacha/wiki/BestPracticeForRPGMakerEN)
 - Video Tutorial
   - [How to Translate RPGMV with LinguaGacha and Translator++ (English)](https://www.youtube.com/watch?v=NbpyL2fMgDc)
 - Feature Description
-  - [CLI Mode](https://github.com/neavo/LinguaGacha/wiki/CLIModeEN)
-  - [Glossary](https://github.com/neavo/LinguaGacha/wiki/GlossaryEN)　　[Text Preserve](https://github.com/neavo/LinguaGacha/wiki/TextPreserveEN)　　[Text Replacement](https://github.com/neavo/LinguaGacha/wiki/ReplacementEN)
-  - [Force Thinking](https://github.com/neavo/LinguaGacha/wiki/ForceThinkingEN)　　[MTool Optimizer](https://github.com/neavo/LinguaGacha/wiki/MToolOptimizerEN)
-  - [TS Conversion](https://github.com/neavo/LinguaGacha/wiki/TSConversionEN) [Name-Field Extraction](https://github.com/neavo/LinguaGacha/wiki/NameFieldExtractionEN)
-  - You can find more details on each feature in the [Wiki](https://github.com/neavo/LinguaGacha/wiki), and you are welcome to share your experience in the [Discussions](https://github.com/neavo/LinguaGacha/discussions)
+  - [CLI Mode](https://github.com/xccxcxxc/LinguaGacha/wiki/CLIModeEN)
+  - [Glossary](https://github.com/xccxcxxc/LinguaGacha/wiki/GlossaryEN)　　[Text Preserve](https://github.com/xccxcxxc/LinguaGacha/wiki/TextPreserveEN)　　[Text Replacement](https://github.com/xccxcxxc/LinguaGacha/wiki/ReplacementEN)
+  - [Force Thinking](https://github.com/xccxcxxc/LinguaGacha/wiki/ForceThinkingEN)　　[MTool Optimizer](https://github.com/xccxcxxc/LinguaGacha/wiki/MToolOptimizerEN)
+  - [TS Conversion](https://github.com/xccxcxxc/LinguaGacha/wiki/TSConversionEN) [Name-Field Extraction](https://github.com/xccxcxxc/LinguaGacha/wiki/NameFieldExtractionEN)
+  - You can find more details on each feature in the [Wiki](https://github.com/xccxcxxc/LinguaGacha/wiki), and you are welcome to share your experience in the [Discussions](https://github.com/xccxcxxc/LinguaGacha/discussions)
 
 ## 対応フォーマット 🏷️
 - 入力フォルダ内のすべての対応ファイル（サブディレクトリを含む）を処理：
@@ -78,14 +78,14 @@
   - [Translator++](https://dreamsavior.net/translator-plusplus) プロジェクト (.trans)
   - [Translator++](https://dreamsavior.net/translator-plusplus) エクスポート (.xlsx)
   - [WOLF 公式翻訳ツール](https://silversecond.booth.pm/items/5151747) エクスポート（.xlsx）
-- 例については [Wiki - 対応フォーマット](https://github.com/neavo/LinguaGacha/wiki/%E6%94%AF%E6%8C%81%E7%9A%84%E6%96%87%E4%BB%B6%E6%A0%BC%E5%BC%8F) を参照。フォーマットのリクエストは [ISSUES](https://github.com/neavo/LinguaGacha/issues) で提出
+- 例については [Wiki - 対応フォーマット](https://github.com/xccxcxxc/LinguaGacha/wiki/%E6%94%AF%E6%8C%81%E7%9A%84%E6%96%87%E4%BB%B6%E6%A0%BC%E5%BC%8F) を参照。フォーマットのリクエストは [ISSUES](https://github.com/xccxcxxc/LinguaGacha/issues) で提出
 
 ### 開発ガイド 🛠️
 - 本プロジェクトは [**uv**](https://github.com/astral-sh/uv) で管理されています
 - 依存関係のインストール: `uv sync -U`
 - アプリの実行: `uv run app.py`
 - PRを提出する前に、コード規約を遵守するために `uv run ruff check --fix` および `uv run ruff format` を必ず実行してください
-- 非開発者の方は [リリースページ](https://github.com/neavo/LinguaGacha/releases) からビルド済みバージョンをダウンロードすることをお勧めします
+- 非開発者の方は [リリースページ](https://github.com/xccxcxxc/LinguaGacha/releases) からビルド済みバージョンをダウンロードすることをお勧めします
 
 ## サポート 😥
 - 実行時のログは `log` フォルダに保存されます

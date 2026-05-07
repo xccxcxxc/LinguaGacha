@@ -16,16 +16,16 @@ from widget.SettingCard import SettingCard
 
 class LaboratoryPage(Base, QWidget):
     MTOOL_OPTIMIZER_URL_ZH: str = (
-        "https://github.com/neavo/LinguaGacha/wiki/MToolOptimizer"
+        "https://github.com/xccxcxxc/LinguaGacha/wiki/MToolOptimizer"
     )
     MTOOL_OPTIMIZER_URL_EN: str = (
-        "https://github.com/neavo/LinguaGacha/wiki/MToolOptimizerEN"
+        "https://github.com/xccxcxxc/LinguaGacha/wiki/MToolOptimizerEN"
     )
     FORCE_THINKING_URL_ZH: str = (
-        "https://github.com/neavo/LinguaGacha/wiki/ForceThinking"
+        "https://github.com/xccxcxxc/LinguaGacha/wiki/ForceThinking"
     )
     FORCE_THINKING_URL_EN: str = (
-        "https://github.com/neavo/LinguaGacha/wiki/ForceThinkingEN"
+        "https://github.com/xccxcxxc/LinguaGacha/wiki/ForceThinkingEN"
     )
 
     def __init__(self, text: str, window: FluentWindow) -> None:
