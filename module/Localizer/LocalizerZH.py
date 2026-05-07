@@ -290,7 +290,6 @@ class LocalizerZH:
     model_basic_setting_page_thinking_low: str = "低"
     model_basic_setting_page_thinking_medium: str = "中"
     model_basic_setting_page_thinking_high: str = "高"
-    model_basic_setting_page_thinking_xhigh: str = "极高"
     model_basic_setting_page_input_token_title: str = "输入 Token 限制"
     model_basic_setting_page_input_token_content: str = "每个任务输入文本的最大 Token 数量"
     model_basic_setting_page_output_token_title: str = "输出 Token 限制"

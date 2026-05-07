@@ -70,12 +70,6 @@ class TaskRequester(Base):
     # OpenAI - GPT5
     RE_GPT5: tuple[re.Pattern, ...] = (re.compile(r"gpt-5", flags=re.IGNORECASE),)
 
-    # OpenAI official reasoning models currently exposed through Responses API.
-    RE_OPENAI_REASONING: tuple[re.Pattern, ...] = (
-        re.compile(r"gpt-5", flags=re.IGNORECASE),
-        re.compile(r"o[134](?:-|$)", flags=re.IGNORECASE),
-    )
-
     # OpenAI - QWEN
     RE_QWEN: tuple[re.Pattern, ...] = (re.compile(r"qwen3\.5", flags=re.IGNORECASE),)
 
@@ -109,20 +103,6 @@ class TaskRequester(Base):
     OUTPUT_TOKEN_LIMIT_AUTO: int = 0
     LEGACY_OUTPUT_TOKEN_LIMIT_AUTO: int = -1
     ANTHROPIC_AUTO_MAX_TOKENS_MIN: int = 8192
-    OPENAI_REASONING_SUMMARY_MODE: str = "auto"
-    OPENAI_RESPONSES_SUPPORTED_ARGS: frozenset[str] = frozenset(
-        {
-            "temperature",
-            "top_p",
-        }
-    )
-    # 测试分支需要覆盖所有由 OpenAI SDK 驱动的兼容接口，而不只是真正的 OpenAI 格式。
-    OPENAI_RESPONSES_API_FORMATS: frozenset[str] = frozenset(
-        {
-            Base.APIFormat.OPENAI,
-            Base.APIFormat.SAKURALLM,
-        }
-    )
 
     def __init__(self, config: Config, model: dict) -> None:
         super().__init__()
@@ -174,10 +154,6 @@ class TaskRequester(Base):
 
     def should_use_max_completion_tokens(self) -> bool:
         return str(self.api_url).startswith("https://api.openai.com")
-
-    def should_use_openai_responses_api(self) -> bool:
-        # 该测试分支用于验证 OpenAI 兼容中转是否支持 Responses API。
-        return self.api_format in self.OPENAI_RESPONSES_API_FORMATS
 
     def apply_output_token_limit(self, args: dict[str, Any], token_key: str) -> None:
         if self.output_token_limit in (
@@ -436,60 +412,6 @@ class TaskRequester(Base):
         return "", content.strip()
 
     @classmethod
-    def extract_openai_responses_think_and_result(
-        cls, response: Any
-    ) -> tuple[str, str]:
-        response_result = str(getattr(response, "output_text", "") or "").strip()
-        response_think_parts: list[str] = []
-        result_parts: list[str] = []
-
-        for item in getattr(response, "output", []) or []:
-            item_type = getattr(item, "type", "")
-            if item_type == "reasoning":
-                cls.collect_openai_responses_reasoning_parts(
-                    response_think_parts,
-                    getattr(item, "summary", None),
-                )
-                cls.collect_openai_responses_reasoning_parts(
-                    response_think_parts,
-                    getattr(item, "content", None),
-                )
-            elif item_type == "message":
-                cls.collect_openai_responses_message_parts(
-                    result_parts,
-                    getattr(item, "content", None),
-                )
-
-        response_think = cls.RE_LINE_BREAK.sub(
-            "\n",
-            "\n".join(part.strip() for part in response_think_parts if part.strip()),
-        ).strip()
-        if response_result == "":
-            response_result = "\n".join(part for part in result_parts if part).strip()
-
-        return response_think, response_result
-
-    @staticmethod
-    def collect_openai_responses_reasoning_parts(
-        parts: list[str], content_parts: Any
-    ) -> None:
-        for part in content_parts or []:
-            text = getattr(part, "text", None)
-            if isinstance(text, str) and text.strip() != "":
-                parts.append(text)
-
-    @staticmethod
-    def collect_openai_responses_message_parts(
-        parts: list[str], content_parts: Any
-    ) -> None:
-        for part in content_parts or []:
-            if getattr(part, "type", "") != "output_text":
-                continue
-            text = getattr(part, "text", None)
-            if isinstance(text, str) and text != "":
-                parts.append(text)
-
-    @classmethod
     def has_output_degradation(cls, text: str) -> bool:
         if not text:
             return False
@@ -497,31 +419,16 @@ class TaskRequester(Base):
         return detector.feed(text)
 
     @staticmethod
-    def extract_usage_int(usage: Any, names: tuple[str, ...]) -> int:
-        fallback_value = 0
-        for name in names:
-            if not hasattr(usage, name):
-                continue
-            try:
-                value = int(getattr(usage, name, 0) or 0)
-            except TypeError, ValueError:
-                continue
-            else:
-                if value != 0:
-                    return value
-                fallback_value = value
-        return fallback_value
-
-    @staticmethod
     def extract_openai_usage_counts(usage: Any) -> tuple[int, int]:
-        input_tokens = TaskRequester.extract_usage_int(
-            usage,
-            ("prompt_tokens", "input_tokens"),
-        )
-        output_tokens = TaskRequester.extract_usage_int(
-            usage,
-            ("completion_tokens", "output_tokens"),
-        )
+        try:
+            input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        except TypeError, ValueError:
+            input_tokens = 0
+
+        try:
+            output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        except TypeError, ValueError:
+            output_tokens = 0
 
         return input_tokens, output_tokens
 
@@ -757,103 +664,6 @@ class TaskRequester(Base):
             return self.requester.extract_openai_usage_counts(state.last_usage)
 
     @dataclasses.dataclass
-    class OpenAIResponsesStreamState:
-        degradation_detector: "TaskRequester.DegradationDetector" = dataclasses.field(
-            default_factory=lambda: TaskRequester.DegradationDetector()
-        )
-        result_parts: list[str] = dataclasses.field(default_factory=list)
-        think_parts: list[str] = dataclasses.field(default_factory=list)
-        last_usage: Any = None
-
-    class OpenAIResponsesStreamStrategy:
-        def __init__(self, requester: "TaskRequester") -> None:
-            self.requester = requester
-
-        def create_state(self) -> "TaskRequester.OpenAIResponsesStreamState":
-            return TaskRequester.OpenAIResponsesStreamState()
-
-        @contextmanager
-        def build_stream_session(
-            self,
-            client: openai.OpenAI,
-            request_args: dict[str, Any],
-        ) -> Iterator[StreamSession]:
-            with client.responses.stream(**request_args) as stream:
-                iterator: Any = iter(stream) if hasattr(stream, "__iter__") else stream
-
-                def close() -> Any:
-                    return safe_close_resource(stream)
-
-                yield StreamSession(
-                    iterator=iterator,
-                    close=close,
-                    finalize=stream.get_final_response,
-                )
-
-        def handle_item(
-            self, state: "TaskRequester.OpenAIResponsesStreamState", item: Any
-        ) -> None:
-            event_type = getattr(item, "type", "")
-            if event_type == "response.output_text.delta":
-                text = getattr(item, "delta", None)
-                if not isinstance(text, str) or not text:
-                    return
-                state.result_parts.append(text)
-                if state.degradation_detector.feed(text):
-                    raise StreamDegradationError("degradation detected")
-            elif event_type in (
-                "response.reasoning_summary_text.delta",
-                "response.reasoning_text.delta",
-            ):
-                text = getattr(item, "delta", None)
-                if isinstance(text, str) and text:
-                    state.think_parts.append(text)
-            elif event_type == "response.completed":
-                response = getattr(item, "response", None)
-                usage = getattr(response, "usage", None)
-                if usage is not None:
-                    state.last_usage = usage
-
-        def finalize(
-            self,
-            session: StreamSession,
-            state: "TaskRequester.OpenAIResponsesStreamState",
-        ) -> tuple[str, str, int, int]:
-            if session.finalize is None:
-                raise RuntimeError("OpenAI Responses stream missing finalize")
-
-            response: Any = session.finalize()
-            response_think, response_result = (
-                self.requester.extract_openai_responses_think_and_result(response)
-            )
-            if response_result == "":
-                response_result = "".join(state.result_parts).strip()
-            if response_think == "":
-                response_think = self.requester.RE_LINE_BREAK.sub(
-                    "\n",
-                    "".join(state.think_parts).strip(),
-                )
-
-            if self.requester.has_output_degradation(
-                response_result[
-                    -self.requester.STREAM_DEGRADATION_FALLBACK_WINDOW_CHARS :
-                ]
-            ):
-                raise StreamDegradationError("degradation detected")
-
-            usage: Any = getattr(response, "usage", None) or state.last_usage
-            input_tokens, output_tokens = self.requester.extract_openai_usage_counts(
-                usage
-            )
-
-            return response_think, response_result, input_tokens, output_tokens
-
-        def get_partial_usage(
-            self, state: "TaskRequester.OpenAIResponsesStreamState"
-        ) -> tuple[int, int]:
-            return self.requester.extract_openai_usage_counts(state.last_usage)
-
-    @dataclasses.dataclass
     class AnthropicStreamState:
         degradation_detector: "TaskRequester.DegradationDetector" = dataclasses.field(
             default_factory=lambda: TaskRequester.DegradationDetector()
@@ -1057,10 +867,6 @@ class TaskRequester(Base):
     def generate_sakura_args(
         self, messages: list[dict[str, str]], args: dict[str, Any]
     ) -> dict:
-        if self.should_use_openai_responses_api():
-            # SakuraLLM 入口本质仍由 OpenAI SDK 发请求，测试分支需强制验证 /responses。
-            return self.generate_openai_responses_args(messages, args)
-
         result: dict[str, Any] = dict(args)
         token_key = (
             "max_completion_tokens"
@@ -1114,11 +920,7 @@ class TaskRequester(Base):
                 ) = self.request_stream_with_strategy(
                     client,
                     request_args,
-                    (
-                        __class__.OpenAIResponsesStreamStrategy(self)
-                        if self.should_use_openai_responses_api()
-                        else __class__.OpenAIStreamStrategy(self)
-                    ),
+                    __class__.OpenAIStreamStrategy(self),
                     stop_checker=stop_checker,
                 )
                 total_input_tokens += input_tokens
@@ -1184,13 +986,6 @@ class TaskRequester(Base):
     def generate_openai_args(
         self, messages: list[dict[str, str]], args: dict[str, Any]
     ) -> dict:
-        if self.should_use_openai_responses_api():
-            return self.generate_openai_responses_args(messages, args)
-        return self.generate_openai_chat_args(messages, args)
-
-    def generate_openai_chat_args(
-        self, messages: list[dict[str, str]], args: dict[str, Any]
-    ) -> dict:
         result: dict[str, Any] = dict(args)
         token_key = (
             "max_completion_tokens"
@@ -1211,8 +1006,6 @@ class TaskRequester(Base):
         if any(v.search(self.model_id) is not None for v in __class__.RE_GPT5):
             if self.thinking_level == ThinkingLevel.OFF:
                 extra_body["reasoning_effort"] = "none"
-            elif self.thinking_level == ThinkingLevel.XHIGH:
-                extra_body["reasoning_effort"] = "xhigh"
             else:
                 extra_body["reasoning_effort"] = self.thinking_level.lower()
         elif any(v.search(self.model_id) is not None for v in __class__.RE_QWEN):
@@ -1223,8 +1016,6 @@ class TaskRequester(Base):
         elif any(v.search(self.model_id) is not None for v in __class__.RE_DOUBAO):
             if self.thinking_level == ThinkingLevel.OFF:
                 extra_body["reasoning_effort"] = "minimal"
-            elif self.thinking_level == ThinkingLevel.XHIGH:
-                extra_body["reasoning_effort"] = "high"
             else:
                 extra_body["reasoning_effort"] = self.thinking_level.lower()
         elif any(v.search(self.model_id) is not None for v in __class__.RE_THINKING):
@@ -1237,68 +1028,6 @@ class TaskRequester(Base):
         result["extra_body"] = extra_body
 
         return result
-
-    def generate_openai_responses_args(
-        self, messages: list[dict[str, str]], args: dict[str, Any]
-    ) -> dict:
-        # Responses API 不接受 Chat Completions 的 messages/max_tokens 形态，需要单独生成参数。
-        result: dict[str, Any] = {
-            key: value
-            for key, value in args.items()
-            if key in self.OPENAI_RESPONSES_SUPPORTED_ARGS
-        }
-        result.update(
-            {
-                "model": self.model_id,
-                "input": self.convert_messages_to_responses_input(messages),
-                "extra_headers": self.build_extra_headers(),
-            }
-        )
-        self.apply_output_token_limit(result, "max_output_tokens")
-
-        reasoning = self.build_openai_responses_reasoning()
-        if reasoning:
-            result["reasoning"] = reasoning
-
-        if self.extra_body:
-            result["extra_body"] = self.extra_body
-
-        return result
-
-    def convert_messages_to_responses_input(
-        self, messages: list[dict[str, str]]
-    ) -> list[dict[str, str]]:
-        responses_input: list[dict[str, str]] = []
-        for message in messages:
-            role = str(message.get("role", "user"))
-            if role not in ("user", "assistant", "system", "developer"):
-                role = "user"
-            responses_input.append(
-                {
-                    "role": role,
-                    "content": str(message.get("content", "")),
-                }
-            )
-        return responses_input
-
-    def build_openai_responses_reasoning(self) -> dict[str, str]:
-        if not any(
-            pattern.search(self.model_id) is not None
-            for pattern in __class__.RE_OPENAI_REASONING
-        ):
-            return {}
-
-        if self.thinking_level == ThinkingLevel.OFF:
-            return {"effort": "none"}
-        if self.thinking_level == ThinkingLevel.XHIGH:
-            return {
-                "effort": "xhigh",
-                "summary": self.OPENAI_REASONING_SUMMARY_MODE,
-            }
-        return {
-            "effort": self.thinking_level.lower(),
-            "summary": self.OPENAI_REASONING_SUMMARY_MODE,
-        }
 
     def request_openai(
         self,
@@ -1335,11 +1064,7 @@ class TaskRequester(Base):
                 ) = self.request_stream_with_strategy(
                     client,
                     request_args,
-                    (
-                        __class__.OpenAIResponsesStreamStrategy(self)
-                        if self.should_use_openai_responses_api()
-                        else __class__.OpenAIStreamStrategy(self)
-                    ),
+                    __class__.OpenAIStreamStrategy(self),
                     stop_checker=stop_checker,
                 )
                 total_input_tokens += input_tokens
