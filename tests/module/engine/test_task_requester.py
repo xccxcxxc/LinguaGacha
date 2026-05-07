@@ -35,10 +35,9 @@ class FakeEngine:
 
 
 @dataclasses.dataclass
-class FakeOpenAIEvent:
-    type: str
+class FakeOpenAIDelta:
     content: Any = None
-    chunk: Any = None
+    reasoning_content: Any = None
 
 
 @dataclasses.dataclass
@@ -68,6 +67,17 @@ class FakeOpenAICompletion:
     usage: Any = None
 
 
+@dataclasses.dataclass
+class FakeOpenAIStreamChoice:
+    delta: Any
+
+
+@dataclasses.dataclass
+class FakeOpenAIChunk:
+    choices: Any = None
+    usage: Any = None
+
+
 class FakeContext:
     def __init__(self, value: Any) -> None:
         self.value = value
@@ -80,19 +90,15 @@ class FakeContext:
 
 
 class FakeOpenAIStream:
-    def __init__(self, events: list[Any], final_completion: Any) -> None:
-        self.events = events
-        self.final_completion = final_completion
+    def __init__(self, chunks: list[Any]) -> None:
+        self.chunks = chunks
         self.closed = 0
 
     def __iter__(self) -> Iterator[Any]:
-        return iter(self.events)
+        return iter(self.chunks)
 
     def close(self) -> None:
         self.closed += 1
-
-    def get_final_completion(self) -> Any:
-        return self.final_completion
 
 
 class FakeOpenAICompletions:
@@ -100,9 +106,9 @@ class FakeOpenAICompletions:
         self.stream_obj = stream_obj
         self.calls: list[dict[str, Any]] = []
 
-    def stream(self, **request_args: Any) -> FakeContext:
+    def create(self, **request_args: Any) -> Any:
         self.calls.append(request_args)
-        return FakeContext(self.stream_obj)
+        return self.stream_obj
 
 
 class FakeOpenAIChat:
@@ -1297,18 +1303,20 @@ def test_openai_strategy_integration_and_degradation_paths() -> None:
         },
     )
 
-    completion_ok = FakeOpenAICompletion(
-        choices=[FakeOpenAIChoice(FakeOpenAIMessage(content="OK"))],
-        usage=FakeUsage(prompt_tokens=1, completion_tokens=2),
-    )
     stream_ok = FakeOpenAIStream(
-        events=[
-            FakeOpenAIEvent(type="ignore"),
-            FakeOpenAIEvent(type="content.delta", content="hi"),
-            FakeOpenAIEvent(type="content.delta", content=None),
-            FakeOpenAIEvent(type="content.delta", content=123),
-        ],
-        final_completion=completion_ok,
+        chunks=[
+            FakeOpenAIChunk(choices=None),
+            FakeOpenAIChunk(choices=[FakeOpenAIStreamChoice(FakeOpenAIDelta("O"))]),
+            FakeOpenAIChunk(
+                choices=[
+                    FakeOpenAIStreamChoice(FakeOpenAIDelta(reasoning_content="TH"))
+                ]
+            ),
+            FakeOpenAIChunk(
+                choices=[FakeOpenAIStreamChoice(FakeOpenAIDelta("K"))],
+                usage=FakeUsage(prompt_tokens=1, completion_tokens=2),
+            ),
+        ]
     )
     client_ok = FakeOpenAIClient(stream_ok)
 
@@ -1318,43 +1326,48 @@ def test_openai_strategy_integration_and_degradation_paths() -> None:
         strategy=TaskRequester.OpenAIStreamStrategy(requester),
         stop_checker=None,
     )
-    assert (think, result, itok, otok) == ("", "OK", 1, 2)
+    assert (think, result, itok, otok) == ("TH", "OK", 1, 2)
+    assert client_ok.chat.completions.calls == [{"stream": True}]
     assert stream_ok.closed == 1
 
-    completion_no_usage = FakeOpenAICompletion(
-        choices=[FakeOpenAIChoice(FakeOpenAIMessage(content="OK"))],
-        usage=None,
+    stream_dict_chunk = FakeOpenAIStream(
+        chunks=[
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "content": "<think>T1\n\nT2</think> OUT",
+                        }
+                    }
+                ],
+                "usage": FakeUsage(prompt_tokens=7, completion_tokens=8),
+            }
+        ]
     )
-    stream_chunk_usage = FakeOpenAIStream(
-        events=[
-            FakeOpenAIEvent(
-                type="chunk",
-                chunk=dataclasses.make_dataclass("Chunk", [("usage", Any)])(
-                    FakeUsage(prompt_tokens=7, completion_tokens=8)
-                ),
-            ),
-            FakeOpenAIEvent(type="content.delta", content="hi"),
-        ],
-        final_completion=completion_no_usage,
-    )
-    client_chunk_usage = FakeOpenAIClient(stream_chunk_usage)
+    client_dict_chunk = FakeOpenAIClient(stream_dict_chunk)
 
     think_chunk, result_chunk, itok_chunk, otok_chunk = (
         requester.request_stream_with_strategy(
-            client_chunk_usage,
+            client_dict_chunk,
             request_args={},
             strategy=TaskRequester.OpenAIStreamStrategy(requester),
             stop_checker=None,
         )
     )
-    assert (think_chunk, result_chunk, itok_chunk, otok_chunk) == ("", "OK", 7, 8)
-
-    completion_bad_usage = FakeOpenAICompletion(
-        choices=[FakeOpenAIChoice(FakeOpenAIMessage(content="OK"))],
-        usage=FakeUsage(prompt_tokens="x", completion_tokens=object()),
+    assert (think_chunk, result_chunk, itok_chunk, otok_chunk) == (
+        "T1\nT2",
+        "OUT",
+        7,
+        8,
     )
+
     stream_bad_usage = FakeOpenAIStream(
-        events=[], final_completion=completion_bad_usage
+        chunks=[
+            FakeOpenAIChunk(
+                choices=[FakeOpenAIStreamChoice(FakeOpenAIDelta("OK"))],
+                usage=FakeUsage(prompt_tokens="x", completion_tokens=object()),
+            )
+        ]
     )
     client_bad_usage = FakeOpenAIClient(stream_bad_usage)
     think2, result2, itok2, otok2 = requester.request_stream_with_strategy(
@@ -1365,30 +1378,13 @@ def test_openai_strategy_integration_and_degradation_paths() -> None:
     )
     assert (think2, result2, itok2, otok2) == ("", "OK", 0, 0)
 
-    completion_degrade = FakeOpenAICompletion(
-        choices=[FakeOpenAIChoice(FakeOpenAIMessage(content="A" * 50))],
-        usage=FakeUsage(prompt_tokens=0, completion_tokens=0),
-    )
-    stream_degrade = FakeOpenAIStream(
-        events=[FakeOpenAIEvent(type="ignore")],
-        final_completion=completion_degrade,
-    )
-    client_degrade = FakeOpenAIClient(stream_degrade)
-    with pytest.raises(StreamDegradationError):
-        requester.request_stream_with_strategy(
-            client_degrade,
-            request_args={},
-            strategy=TaskRequester.OpenAIStreamStrategy(requester),
-            stop_checker=None,
-        )
-
-    completion_handle_degrade = FakeOpenAICompletion(
-        choices=[FakeOpenAIChoice(FakeOpenAIMessage(content="OK"))],
-        usage=FakeUsage(prompt_tokens=0, completion_tokens=0),
-    )
     stream_handle_degrade = FakeOpenAIStream(
-        events=[FakeOpenAIEvent(type="content.delta", content="A" * 50)],
-        final_completion=completion_handle_degrade,
+        chunks=[
+            FakeOpenAIChunk(
+                choices=[FakeOpenAIStreamChoice(FakeOpenAIDelta("A" * 50))],
+                usage=FakeUsage(prompt_tokens=0, completion_tokens=0),
+            )
+        ]
     )
     client_handle_degrade = FakeOpenAIClient(stream_handle_degrade)
     with pytest.raises(StreamDegradationError):
@@ -1400,7 +1396,7 @@ def test_openai_strategy_integration_and_degradation_paths() -> None:
         )
 
 
-def test_openai_finalize_requires_finalize_callable() -> None:
+def test_openai_finalize_uses_accumulated_chunks_without_sdk_finalizer() -> None:
     requester = TaskRequester(
         Config(),
         {
@@ -1412,8 +1408,11 @@ def test_openai_finalize_requires_finalize_callable() -> None:
     )
     strategy = TaskRequester.OpenAIStreamStrategy(requester)
     session = StreamSession(iterator=[], close=lambda: None, finalize=None)
-    with pytest.raises(RuntimeError, match="missing finalize"):
-        strategy.finalize(session, strategy.create_state())
+    state = strategy.create_state()
+    state.result_parts.append("OK")
+    state.last_usage = FakeUsage(prompt_tokens=1, completion_tokens=2)
+
+    assert strategy.finalize(session, state) == ("", "OK", 1, 2)
 
 
 def test_request_openai_accumulates_partial_usage_across_retry() -> None:

@@ -580,10 +580,19 @@ class TaskRequester(Base):
             return False
 
     @dataclasses.dataclass
+    class OpenAIMessageSnapshot:
+        """原始流式 chunk 累积后的最小消息快照，复用现有思考内容拆分逻辑。"""
+
+        content: str
+        reasoning_content: str | None = None
+
+    @dataclasses.dataclass
     class OpenAIStreamState:
         degradation_detector: "TaskRequester.DegradationDetector" = dataclasses.field(
             default_factory=lambda: TaskRequester.DegradationDetector()
         )
+        result_parts: list[str] = dataclasses.field(default_factory=list)
+        think_parts: list[str] = dataclasses.field(default_factory=list)
         last_usage: Any = None
 
     class OpenAIStreamStrategy:
@@ -599,47 +608,67 @@ class TaskRequester(Base):
             client: openai.OpenAI,
             request_args: dict[str, Any],
         ) -> Iterator[StreamSession]:
-            with client.chat.completions.stream(**request_args) as stream:
-                iterator: Any = iter(stream) if hasattr(stream, "__iter__") else stream
+            raw_args = dict(request_args)
+            raw_args["stream"] = True
+            stream = client.chat.completions.create(**raw_args)
+            iterator: Any = iter(stream) if hasattr(stream, "__iter__") else stream
 
-                def close() -> Any:
-                    return safe_close_resource(stream)
+            def close() -> Any:
+                return safe_close_resource(stream)
 
-                yield StreamSession(
-                    iterator=iterator,
-                    close=close,
-                    finalize=stream.get_final_completion,
-                )
+            yield StreamSession(iterator=iterator, close=close)
+
+        @staticmethod
+        def get_field(value: Any, name: str) -> Any:
+            """兼容 SDK 对象与中转返回的 dict chunk，避免绑定某个具体 SDK 快照类型。"""
+
+            if isinstance(value, dict):
+                return value.get(name)
+            return getattr(value, name, None)
 
         def handle_item(
             self, state: "TaskRequester.OpenAIStreamState", item: Any
         ) -> None:
-            chunk = getattr(item, "chunk", None)
-            usage = getattr(chunk, "usage", None)
+            usage = self.get_field(item, "usage")
             if usage is not None:
                 state.last_usage = usage
 
-            event_type = getattr(item, "type", "")
-            if event_type != "content.delta":
+            choices = self.get_field(item, "choices")
+            if choices is None:
                 return
 
-            text = getattr(item, "content", None)
-            if not isinstance(text, str) or not text:
+            try:
+                choices_iterator = iter(choices)
+            except TypeError:
                 return
 
-            if state.degradation_detector.feed(text):
-                raise StreamDegradationError("degradation detected")
+            for choice in choices_iterator:
+                delta = self.get_field(choice, "delta")
+                if delta is None:
+                    continue
+
+                reasoning_text = self.get_field(delta, "reasoning_content")
+                if isinstance(reasoning_text, str) and reasoning_text:
+                    state.think_parts.append(reasoning_text)
+
+                text = self.get_field(delta, "content")
+                if not isinstance(text, str) or not text:
+                    continue
+
+                state.result_parts.append(text)
+                if state.degradation_detector.feed(text):
+                    raise StreamDegradationError("degradation detected")
 
         def finalize(
             self,
             session: StreamSession,
             state: "TaskRequester.OpenAIStreamState",
         ) -> tuple[str, str, int, int]:
-            if session.finalize is None:
-                raise RuntimeError("OpenAI stream missing finalize")
-
-            completion: Any = session.finalize()
-            message = completion.choices[0].message
+            del session
+            message = TaskRequester.OpenAIMessageSnapshot(
+                content="".join(state.result_parts).strip(),
+                reasoning_content="".join(state.think_parts).strip() or None,
+            )
             response_think, response_result = (
                 self.requester.extract_openai_think_and_result(message)
             )
@@ -651,9 +680,8 @@ class TaskRequester(Base):
             ):
                 raise StreamDegradationError("degradation detected")
 
-            usage: Any = getattr(completion, "usage", None) or state.last_usage
             input_tokens, output_tokens = self.requester.extract_openai_usage_counts(
-                usage
+                state.last_usage
             )
 
             return response_think, response_result, input_tokens, output_tokens
