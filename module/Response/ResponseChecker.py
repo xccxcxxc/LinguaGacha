@@ -1,5 +1,6 @@
 import re
 from enum import StrEnum
+from typing import Any
 
 from base.Base import Base
 from base.BaseLanguage import BaseLanguage
@@ -8,6 +9,9 @@ from module.Config import Config
 from module.QualityRule.QualityRuleSnapshot import QualityRuleSnapshot
 from module.Filter.LanguageFilter import LanguageFilter
 from module.Filter.RuleFilter import RuleFilter
+from module.Response.ResponseSimilarityDiagnosticLogger import (
+    ResponseSimilarityDiagnosticLogger,
+)
 from module.Text.TextHelper import TextHelper
 from module.TextProcessor import TextProcessor
 
@@ -95,7 +99,7 @@ class ResponseChecker(Base):
         self, srcs: list[str], dsts: list[str], text_type: Item.TextType
     ) -> list[Error]:
         checks: list[__class__.Error] = []
-        for src, dst in zip(srcs, dsts):
+        for line_index, (src, dst) in enumerate(zip(srcs, dsts)):
             src = src.strip()
             dst = dst.strip()
 
@@ -148,7 +152,12 @@ class ResponseChecker(Base):
                 continue
 
             # 判断是否包含或相似；跨脚本翻译不能只看字符集合，否则专名/标题保留会误触发切分重试。
-            if self.has_similarity_error(src, dst):
+            if self.has_similarity_error(
+                src,
+                dst,
+                line_index=line_index,
+                text_type=text_type,
+            ):
                 checks.append(__class__.Error.LINE_ERROR_SIMILARITY)
                 continue
 
@@ -158,7 +167,14 @@ class ResponseChecker(Base):
         # 返回结果
         return checks
 
-    def has_similarity_error(self, src: str, dst: str) -> bool:
+    def has_similarity_error(
+        self,
+        src: str,
+        dst: str,
+        *,
+        line_index: int = -1,
+        text_type: Item.TextType = Item.TextType.NONE,
+    ) -> bool:
         """判断是否需要把相似文本视为运行期失败。"""
         if not self.config.check_similarity:
             return False
@@ -167,7 +183,8 @@ class ResponseChecker(Base):
         if src == "" or dst == "":
             return False
 
-        if not self.has_basic_similarity(src, dst):
+        basic_detail = self.build_basic_similarity_detail(src, dst)
+        if not bool(basic_detail["matched"]):
             return False
 
         if (
@@ -175,16 +192,69 @@ class ResponseChecker(Base):
             and self.config.target_language == BaseLanguage.Enum.ZH
         ):
             # 日翻中只把残留假名视为运行期失败，中文译文中的汉字重叠不应触发重试。
-            return TextHelper.JA.any_hiragana(dst) or TextHelper.JA.any_katakana(dst)
+            has_error = TextHelper.JA.any_hiragana(dst) or TextHelper.JA.any_katakana(
+                dst
+            )
+            if has_error:
+                self.write_similarity_diagnostic(
+                    reason="ja_to_zh_kana_after_basic_similarity",
+                    src=src,
+                    dst=dst,
+                    line_index=line_index,
+                    text_type=text_type,
+                    basic_detail=basic_detail,
+                    extra_detail={
+                        "has_hiragana": TextHelper.JA.any_hiragana(dst),
+                        "has_katakana": TextHelper.JA.any_katakana(dst),
+                    },
+                )
+            return has_error
         elif (
             self.config.source_language == BaseLanguage.Enum.KO
             and self.config.target_language == BaseLanguage.Enum.ZH
         ):
             # 韩翻中同理，只把残留谚文视为运行期失败。
-            return TextHelper.KO.any_hangeul(dst)
+            has_error = TextHelper.KO.any_hangeul(dst)
+            if has_error:
+                self.write_similarity_diagnostic(
+                    reason="ko_to_zh_hangeul_after_basic_similarity",
+                    src=src,
+                    dst=dst,
+                    line_index=line_index,
+                    text_type=text_type,
+                    basic_detail=basic_detail,
+                    extra_detail={"has_hangeul": True},
+                )
+            return has_error
         elif self.is_cross_script_to_cjk():
-            return self.has_cross_script_source_residue(dst)
+            residue_detail = self.build_cross_script_source_residue_detail(dst)
+            has_error = bool(residue_detail["has_error"])
+            if has_error:
+                self.write_similarity_diagnostic(
+                    reason="cross_script_source_residue_without_target_text",
+                    src=src,
+                    dst=dst,
+                    line_index=line_index,
+                    text_type=text_type,
+                    basic_detail=basic_detail,
+                    extra_detail=residue_detail,
+                )
+            return has_error
         else:
+            reason = (
+                "source_language_all_similarity"
+                if self.config.source_language == BaseLanguage.ALL
+                else "general_similarity"
+            )
+            self.write_similarity_diagnostic(
+                reason=reason,
+                src=src,
+                dst=dst,
+                line_index=line_index,
+                text_type=text_type,
+                basic_detail=basic_detail,
+                extra_detail={},
+            )
             return True
 
     @classmethod
@@ -197,6 +267,20 @@ class ResponseChecker(Base):
             > cls.SIMILARITY_THRESHOLD
         )
 
+    @classmethod
+    def build_basic_similarity_detail(cls, src: str, dst: str) -> dict[str, Any]:
+        """记录基础相似度命中方式，方便定位误判来源。"""
+        src_in_dst = src in dst
+        dst_in_src = dst in src
+        jaccard = TextHelper.check_similarity_by_jaccard(src, dst)
+        return {
+            "src_in_dst": src_in_dst,
+            "dst_in_src": dst_in_src,
+            "jaccard": round(jaccard, 4),
+            "threshold": cls.SIMILARITY_THRESHOLD,
+            "matched": src_in_dst or dst_in_src or jaccard > cls.SIMILARITY_THRESHOLD,
+        }
+
     def is_cross_script_to_cjk(self) -> bool:
         """非 CJK 到 CJK 的翻译要按源文残留判断，而不是按普通相似度判断。"""
         if self.config.source_language == BaseLanguage.ALL:
@@ -207,17 +291,66 @@ class ResponseChecker(Base):
 
     def has_cross_script_source_residue(self, dst: str) -> bool:
         """跨脚本翻译只有在缺少目标语证据且源语残留足够明显时才失败。"""
-        if self.contains_language_text(dst, self.config.target_language):
-            return False
+        return bool(self.build_cross_script_source_residue_detail(dst)["has_error"])
 
-        if self.looks_like_preserved_source_title(dst):
-            return False
+    def build_cross_script_source_residue_detail(self, dst: str) -> dict[str, Any]:
+        """给跨脚本残留判断生成可记录的细节。"""
+        has_target_text = self.contains_language_text(dst, self.config.target_language)
+        preserved_title = self.looks_like_preserved_source_title(dst)
 
         source_char_count = self.count_language_chars(dst, self.config.source_language)
         source_word_count = len(self.RE_SOURCE_WORD.findall(dst))
-        return (
-            source_char_count >= self.CROSS_SCRIPT_MIN_SOURCE_CHARS
-            or source_word_count >= self.CROSS_SCRIPT_MIN_SOURCE_WORDS
+        has_error = (
+            not has_target_text
+            and not preserved_title
+            and (
+                source_char_count >= self.CROSS_SCRIPT_MIN_SOURCE_CHARS
+                or source_word_count >= self.CROSS_SCRIPT_MIN_SOURCE_WORDS
+            )
+        )
+        return {
+            "has_error": has_error,
+            "has_target_text": has_target_text,
+            "looks_like_preserved_source_title": preserved_title,
+            "source_char_count": source_char_count,
+            "source_char_threshold": self.CROSS_SCRIPT_MIN_SOURCE_CHARS,
+            "source_word_count": source_word_count,
+            "source_word_threshold": self.CROSS_SCRIPT_MIN_SOURCE_WORDS,
+            "target_char_count": self.count_language_chars(
+                dst,
+                self.config.target_language,
+            ),
+        }
+
+    def write_similarity_diagnostic(
+        self,
+        *,
+        reason: str,
+        src: str,
+        dst: str,
+        line_index: int,
+        text_type: Item.TextType,
+        basic_detail: dict[str, Any],
+        extra_detail: dict[str, Any],
+    ) -> None:
+        """写出相似度失败的决策细节，供用户回传日志继续定位。"""
+        ResponseSimilarityDiagnosticLogger.write(
+            {
+                "event": "runtime_similarity_check_failed",
+                "reason": reason,
+                "source_language": str(self.config.source_language),
+                "target_language": str(self.config.target_language),
+                "text_type": str(text_type),
+                "line_index": line_index,
+                "item_count": len(self.items),
+                "item_contexts": ResponseSimilarityDiagnosticLogger.build_item_contexts(
+                    self.items
+                ),
+                "normalized_src": ResponseSimilarityDiagnosticLogger.truncate_text(src),
+                "normalized_dst": ResponseSimilarityDiagnosticLogger.truncate_text(dst),
+                "basic_similarity": basic_detail,
+                "detail": extra_detail,
+            }
         )
 
     @classmethod

@@ -299,7 +299,9 @@ class Translation(Base):
             if not items:
                 return
 
-            # 自动导出在翻译收尾阶段已对 items_cache 执行过后处理，此处避免重复追加拆分行。
+            self.apply_quote_postprocess_for_export(items)
+
+            # 自动导出在翻译收尾阶段已对 items_cache 执行过 mtool 后处理，此处避免重复追加拆分行。
             if apply_mtool_postprocess:
                 self.mtool_optimizer_postprocess(items)
             self.check_and_wirte_result(items)
@@ -633,6 +635,10 @@ class Translation(Base):
             return
 
         DataManager.get().update_batch(items=[item.to_dict() for item in changed_items])
+
+    def apply_quote_postprocess_for_export(self, items: list[Item]) -> None:
+        """导出前修正导出快照，便于中途停止后立即检查引号效果。"""
+        TranslationQuotePostProcessor.fix_items(items)
 
     def start_translation_pipeline(
         self,

@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 import pytest
 
@@ -6,6 +7,7 @@ from base.BaseLanguage import BaseLanguage
 from model.Item import Item
 from module.Config import Config
 from module.Response.ResponseChecker import ResponseChecker
+from module.Utils.JSONTool import JSONTool
 
 
 def install_fake_text_processor(
@@ -485,3 +487,42 @@ class TestResponseCheckerSourceLanguageALL:
         checks = checker.check_lines(["Hello World"], [""], Item.TextType.NONE)
 
         assert checks == [ResponseChecker.Error.LINE_ERROR_EMPTY_LINE]
+
+    def test_check_lines_writes_similarity_diagnostic_log(
+        self,
+        fs: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """运行期相似度失败时写独立 JSONL，便于后续定位具体分支。"""
+        del fs
+        monkeypatch.setattr(
+            "module.Response.ResponseSimilarityDiagnosticLogger.BasePath.get_log_dir",
+            lambda: "/logs",
+        )
+        checker = create_checker(
+            Config(
+                source_language=BaseLanguage.ALL,
+                target_language=BaseLanguage.Enum.ZH,
+                check_kana_residue=False,
+                check_hangeul_residue=False,
+                check_similarity=True,
+            )
+        )
+
+        checks = checker.check_lines(
+            ["Hello World"], ["Hello World"], Item.TextType.NONE
+        )
+
+        log_path = Path("/logs/similarity_diagnostics.log")
+        records = [
+            JSONTool.loads(line)
+            for line in log_path.read_text(encoding="utf-8").splitlines()
+        ]
+        assert checks == [ResponseChecker.Error.LINE_ERROR_SIMILARITY]
+        assert records[0]["event"] == "runtime_similarity_check_failed"
+        assert records[0]["reason"] == "source_language_all_similarity"
+        assert records[0]["source_language"] == BaseLanguage.ALL
+        assert records[0]["target_language"] == str(BaseLanguage.Enum.ZH)
+        assert records[0]["normalized_src"] == "Hello World"
+        assert records[0]["normalized_dst"] == "Hello World"
+        assert records[0]["basic_similarity"]["matched"] is True

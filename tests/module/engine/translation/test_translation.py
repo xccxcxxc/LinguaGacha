@@ -514,6 +514,46 @@ def test_run_translation_export_manual_success_flow(
     )
 
 
+def test_run_translation_export_manual_fixes_quotes_for_stopped_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    translation = create_translation_stub()
+    item = Item(
+        src="\u201cHello.\u201d",
+        dst="\u300c你好。\u300d",
+        status=Base.ProjectStatus.PROCESSED,
+        file_type=Item.FileType.EPUB,
+        file_path="book.epub",
+        extra_field={
+            "epub": {
+                "doc_path": "chapter.xhtml",
+                "block_path": "/html/body/p[1]",
+            }
+        },
+    )
+    engine = create_engine()
+    dm = create_data_manager(loaded=True, items=[item])
+    logger = FakeLogManager()
+    setup_common_patches(monkeypatch, engine=engine, dm=dm, logger=logger)
+    exported_items: list[Item] = []
+
+    def capture_export_items(items: list[Item]) -> None:
+        exported_items.extend(items)
+
+    translation.check_and_wirte_result = capture_export_items
+    translation.mtool_optimizer_postprocess = MagicMock()
+
+    Translation.run_translation_export(
+        translation,
+        source=Translation.ExportSource.MANUAL,
+        apply_mtool_postprocess=False,
+    )
+
+    assert [exported_item.get_dst() for exported_item in exported_items] == [
+        "\u201c你好。\u201d"
+    ]
+
+
 def test_run_translation_export_emits_error_toast_when_write_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
