@@ -233,7 +233,6 @@ class LocalizerEN(LocalizerZH):
     response_checker_fail_degradation: str = "Degradation Occurred"
     response_checker_line_error_empty_line: str = "Empty Line"
     response_checker_line_error_similarity: str = "High Similarity"
-    response_checker_line_error_quote: str = "Quote Mark Mismatch"
     project_store_ingesting_assets: str = "Ingesting assets …"
     project_store_ingesting_file: str = "Ingesting assets: {NAME}"
     project_store_parsing_items: str = "Parsing translation items …"

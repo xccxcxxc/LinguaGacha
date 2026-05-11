@@ -322,10 +322,6 @@ class TestTranslationTaskUtils:
                 "response_checker_line_error_similarity",
             ),
             (
-                ResponseChecker.Error.LINE_ERROR_QUOTE,
-                "response_checker_line_error_quote",
-            ),
-            (
                 ResponseChecker.Error.FAIL_DEGRADATION,
                 "response_checker_fail_degradation",
             ),

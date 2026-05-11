@@ -159,13 +159,6 @@ class PunctuationFixer:
         return tuple(delimiters)
 
     @classmethod
-    def can_align_quote_delimiters(cls, src: str, dst: str) -> bool:
-        """只有引用引号数量一致时才允许自动修正；数量错乱必须触发重试。"""
-        src_delimiters = cls.collect_quote_delimiters(src)
-        dst_delimiters = cls.collect_quote_delimiters(dst)
-        return len(src_delimiters) == len(dst_delimiters)
-
-    @classmethod
     def fix_quote_delimiters(cls, src: str, dst: str) -> str:
         """把译文中的话语引用引号逐个替换为原文对应字符。"""
         src_delimiters = cls.collect_quote_delimiters(src)

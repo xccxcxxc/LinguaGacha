@@ -235,7 +235,7 @@ class TestResponseCheckerCheckLines:
 
         assert checks == [ResponseChecker.Error.NONE]
 
-    def test_check_lines_rejects_mismatched_speech_quote_delimiters(self) -> None:
+    def test_check_lines_allows_mismatched_speech_quote_delimiters(self) -> None:
         checker = create_checker(
             create_config(
                 BaseLanguage.Enum.EN,
@@ -254,9 +254,22 @@ class TestResponseCheckerCheckLines:
 
         checks = checker.check_lines([src], [dst], Item.TextType.NONE)
 
-        assert checks == [ResponseChecker.Error.LINE_ERROR_QUOTE]
+        assert checks == [ResponseChecker.Error.NONE]
 
-    def test_check_lines_ignores_word_apostrophes_for_quote_check(self) -> None:
+    @pytest.mark.parametrize(
+        ("src", "dst"),
+        [
+            ("\u2019Cause I said so.", "因为我这么说。"),
+            ("Rock \u2019n\u2019 roll.", "摇滚乐。"),
+            ("The soldiers\u2019 camp.", "士兵们的营地。"),
+            ("It\u2019s the Thiefmaker\u2019s problem.", "这是盗贼匠的问题。"),
+        ],
+    )
+    def test_check_lines_allows_word_apostrophes(
+        self,
+        src: str,
+        dst: str,
+    ) -> None:
         checker = create_checker(
             create_config(
                 BaseLanguage.Enum.EN,
@@ -265,11 +278,7 @@ class TestResponseCheckerCheckLines:
             )
         )
 
-        checks = checker.check_lines(
-            ["It\u2019s the Thiefmaker\u2019s problem."],
-            ["这是盗贼匠的问题。"],
-            Item.TextType.NONE,
-        )
+        checks = checker.check_lines([src], [dst], Item.TextType.NONE)
 
         assert checks == [ResponseChecker.Error.NONE]
 
