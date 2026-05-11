@@ -24,6 +24,9 @@ from module.Engine.TaskRunnerLifecycle import TaskRunnerLifecycle
 from module.Engine.Translation.TranslationProgressTracker import (
     TranslationProgressTracker,
 )
+from module.Engine.Translation.TranslationQuotePostProcessor import (
+    TranslationQuotePostProcessor,
+)
 from module.Engine.Translation.TranslationScheduler import TranslationScheduler
 from module.Engine.Translation.TranslationTaskHooks import TranslationTaskHooks
 from module.File.FileManager import FileManager
@@ -535,6 +538,7 @@ class Translation(Base):
         time.sleep(1.0)
 
         if self.items_cache:
+            self.apply_quote_postprocess(self.items_cache)
             self.mtool_optimizer_postprocess(self.items_cache)
 
         final_project_status = (
@@ -621,6 +625,14 @@ class Translation(Base):
                 "project_status": Base.ProjectStatus.PROCESSING,
             },
         )
+
+    def apply_quote_postprocess(self, items: list[Item]) -> None:
+        """翻译全部完成后统一修正段落引号，并把变更写回数据库。"""
+        changed_items = TranslationQuotePostProcessor.fix_items(items)
+        if not changed_items:
+            return
+
+        DataManager.get().update_batch(items=[item.to_dict() for item in changed_items])
 
     def start_translation_pipeline(
         self,

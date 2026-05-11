@@ -34,6 +34,12 @@ class ResponseChecker(Base):
 
     # 重试次数阈值
     RETRY_COUNT_THRESHOLD: int = 2
+    # 字符集合相似度只作为粗筛；跨语种翻译还要看目标语字符证据，避免专名/标题误触发重试。
+    SIMILARITY_THRESHOLD: float = 0.80
+    CROSS_SCRIPT_MIN_SOURCE_CHARS: int = 8
+    CROSS_SCRIPT_MIN_SOURCE_WORDS: int = 2
+    PRESERVED_SOURCE_TITLE_MAX_WORDS: int = 4
+    RE_SOURCE_WORD: re.Pattern[str] = re.compile(r"[A-Za-zÀ-ɏ]+")
 
     def __init__(
         self,
@@ -141,37 +147,106 @@ class ResponseChecker(Base):
                 checks.append(__class__.Error.LINE_ERROR_HANGEUL)
                 continue
 
-            # 判断是否包含或相似
-            if self.config.check_similarity and (
-                src in dst
-                or dst in src
-                or TextHelper.check_similarity_by_jaccard(src, dst) > 0.80
-            ):
-                # 日翻中时，只有译文至少包含一个平假名或片假名字符时，才判断为 相似
-                if (
-                    self.config.source_language == BaseLanguage.Enum.JA
-                    and self.config.target_language == BaseLanguage.Enum.ZH
-                ):
-                    if TextHelper.JA.any_hiragana(dst) or TextHelper.JA.any_katakana(
-                        dst
-                    ):
-                        checks.append(__class__.Error.LINE_ERROR_SIMILARITY)
-                        continue
-                # 韩翻中时，只有译文至少包含一个谚文字符时，才判断为 相似
-                elif (
-                    self.config.source_language == BaseLanguage.Enum.KO
-                    and self.config.target_language == BaseLanguage.Enum.ZH
-                ):
-                    if TextHelper.KO.any_hangeul(dst):
-                        checks.append(__class__.Error.LINE_ERROR_SIMILARITY)
-                        continue
-                # 其他情况，只要原文译文相同或相似就可以判断为 相似
-                else:
-                    checks.append(__class__.Error.LINE_ERROR_SIMILARITY)
-                    continue
+            # 判断是否包含或相似；跨脚本翻译不能只看字符集合，否则专名/标题保留会误触发切分重试。
+            if self.has_similarity_error(src, dst):
+                checks.append(__class__.Error.LINE_ERROR_SIMILARITY)
+                continue
 
             # 默认为无错误
             checks.append(__class__.Error.NONE)
 
         # 返回结果
         return checks
+
+    def has_similarity_error(self, src: str, dst: str) -> bool:
+        """判断是否需要把相似文本视为运行期失败。"""
+        if not self.config.check_similarity:
+            return False
+
+        # 文本保护规则可能把原文或译文剥离为空；空串包含关系不能作为失败依据。
+        if src == "" or dst == "":
+            return False
+
+        if not self.has_basic_similarity(src, dst):
+            return False
+
+        if (
+            self.config.source_language == BaseLanguage.Enum.JA
+            and self.config.target_language == BaseLanguage.Enum.ZH
+        ):
+            # 日翻中只把残留假名视为运行期失败，中文译文中的汉字重叠不应触发重试。
+            return TextHelper.JA.any_hiragana(dst) or TextHelper.JA.any_katakana(dst)
+        elif (
+            self.config.source_language == BaseLanguage.Enum.KO
+            and self.config.target_language == BaseLanguage.Enum.ZH
+        ):
+            # 韩翻中同理，只把残留谚文视为运行期失败。
+            return TextHelper.KO.any_hangeul(dst)
+        elif self.is_cross_script_to_cjk():
+            return self.has_cross_script_source_residue(dst)
+        else:
+            return True
+
+    @classmethod
+    def has_basic_similarity(cls, src: str, dst: str) -> bool:
+        """先做便宜的包含/Jaccard 粗筛，避免每行都跑更复杂的分支。"""
+        return (
+            src in dst
+            or dst in src
+            or TextHelper.check_similarity_by_jaccard(src, dst)
+            > cls.SIMILARITY_THRESHOLD
+        )
+
+    def is_cross_script_to_cjk(self) -> bool:
+        """非 CJK 到 CJK 的翻译要按源文残留判断，而不是按普通相似度判断。"""
+        if self.config.source_language == BaseLanguage.ALL:
+            return False
+        return not BaseLanguage.is_cjk(
+            self.config.source_language
+        ) and BaseLanguage.is_cjk(self.config.target_language)
+
+    def has_cross_script_source_residue(self, dst: str) -> bool:
+        """跨脚本翻译只有在缺少目标语证据且源语残留足够明显时才失败。"""
+        if self.contains_language_text(dst, self.config.target_language):
+            return False
+
+        if self.looks_like_preserved_source_title(dst):
+            return False
+
+        source_char_count = self.count_language_chars(dst, self.config.source_language)
+        source_word_count = len(self.RE_SOURCE_WORD.findall(dst))
+        return (
+            source_char_count >= self.CROSS_SCRIPT_MIN_SOURCE_CHARS
+            or source_word_count >= self.CROSS_SCRIPT_MIN_SOURCE_WORDS
+        )
+
+    @classmethod
+    def looks_like_preserved_source_title(cls, text: str) -> bool:
+        """短标题或专名常常合法保留原文，运行期不应因此切分重试。"""
+        words = cls.RE_SOURCE_WORD.findall(text)
+        if len(words) == 0 or len(words) > cls.PRESERVED_SOURCE_TITLE_MAX_WORDS:
+            return False
+        return all(word.isupper() or word[0].isupper() for word in words)
+
+    @classmethod
+    def contains_language_text(
+        cls, text: str, language: BaseLanguage.Enum | str
+    ) -> bool:
+        """按语言枚举检查文本中是否存在目标语字符。"""
+        return cls.count_language_chars(text, language) > 0
+
+    @classmethod
+    def count_language_chars(cls, text: str, language: BaseLanguage.Enum | str) -> int:
+        """集中处理语言到字符检测器的映射，避免相似度逻辑散落动态 getattr。"""
+        if language == BaseLanguage.Enum.ZH:
+            return sum(1 for char in text if TextHelper.CJK.char(char))
+        elif language == BaseLanguage.Enum.EN:
+            return sum(1 for char in text if TextHelper.Latin.char(char))
+        elif language == BaseLanguage.ALL:
+            return 0
+        else:
+            helper = getattr(TextHelper, str(language), None)
+            char_checker = getattr(helper, "char", None)
+            if not callable(char_checker):
+                return 0
+            return sum(1 for char in text if char_checker(char))

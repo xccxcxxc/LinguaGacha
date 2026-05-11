@@ -209,6 +209,44 @@ class TestResponseCheckerCheckLines:
 
         assert checks == [ResponseChecker.Error.LINE_ERROR_SIMILARITY]
 
+    def test_check_lines_similarity_ignores_empty_preserved_source(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        install_fake_text_processor(monkeypatch, re.compile(r"<[^>]+>"))
+        checker = create_checker(
+            create_config(BaseLanguage.Enum.EN, BaseLanguage.Enum.ZH)
+        )
+
+        checks = checker.check_lines(["<tag>"], ["<tag>译文"], Item.TextType.NONE)
+
+        assert checks == [ResponseChecker.Error.NONE]
+
+    def test_check_lines_en_to_zh_allows_preserved_title_with_target_text(
+        self,
+    ) -> None:
+        checker = create_checker(
+            create_config(BaseLanguage.Enum.EN, BaseLanguage.Enum.ZH)
+        )
+
+        checks = checker.check_lines(
+            ["Best Served Cold"],
+            ["Best Served Cold，最佳冷盘。"],
+            Item.TextType.NONE,
+        )
+
+        assert checks == [ResponseChecker.Error.NONE]
+
+    def test_check_lines_en_to_zh_allows_short_single_token_source_residue(
+        self,
+    ) -> None:
+        checker = create_checker(
+            create_config(BaseLanguage.Enum.EN, BaseLanguage.Enum.ZH)
+        )
+
+        checks = checker.check_lines(["Shivers"], ["Shivers"], Item.TextType.NONE)
+
+        assert checks == [ResponseChecker.Error.NONE]
+
     def test_check_lines_returns_none_when_similarity_condition_not_met(self) -> None:
         checker = create_checker(
             create_config(BaseLanguage.Enum.EN, BaseLanguage.Enum.ZH)
