@@ -218,6 +218,61 @@ class TestResponseCheckerCheckLines:
 
         assert checks == [ResponseChecker.Error.NONE]
 
+    def test_check_lines_allows_quote_style_that_auto_fix_can_align(self) -> None:
+        checker = create_checker(
+            create_config(
+                BaseLanguage.Enum.EN,
+                BaseLanguage.Enum.ZH,
+                check_similarity=False,
+            )
+        )
+
+        checks = checker.check_lines(
+            ["\u201cHello.\u201d"],
+            ["\u300c你好。\u300d"],
+            Item.TextType.NONE,
+        )
+
+        assert checks == [ResponseChecker.Error.NONE]
+
+    def test_check_lines_rejects_mismatched_speech_quote_delimiters(self) -> None:
+        checker = create_checker(
+            create_config(
+                BaseLanguage.Enum.EN,
+                BaseLanguage.Enum.ZH,
+                check_similarity=False,
+            )
+        )
+        src = (
+            "\u201cGods. It\u2019s a sob story after all.\u201d "
+            "\u201cFind some other lackwit.\u201d"
+        )
+        dst = (
+            "\u300c诸神在上。原来还真是个苦情故事。\u2019"
+            "\u300c去找别的\u2019 \u300c蠢货\u300d"
+        )
+
+        checks = checker.check_lines([src], [dst], Item.TextType.NONE)
+
+        assert checks == [ResponseChecker.Error.LINE_ERROR_QUOTE]
+
+    def test_check_lines_ignores_word_apostrophes_for_quote_check(self) -> None:
+        checker = create_checker(
+            create_config(
+                BaseLanguage.Enum.EN,
+                BaseLanguage.Enum.ZH,
+                check_similarity=False,
+            )
+        )
+
+        checks = checker.check_lines(
+            ["It\u2019s the Thiefmaker\u2019s problem."],
+            ["这是盗贼匠的问题。"],
+            Item.TextType.NONE,
+        )
+
+        assert checks == [ResponseChecker.Error.NONE]
+
     def test_check_lines_ja_to_zh_similarity_requires_kana_in_destination(
         self,
         monkeypatch: pytest.MonkeyPatch,

@@ -574,6 +574,8 @@ class TranslationTask(Base):
             return Localizer.get().response_checker_line_error_empty_line
         elif error == ResponseChecker.Error.LINE_ERROR_SIMILARITY:
             return Localizer.get().response_checker_line_error_similarity
+        elif error == ResponseChecker.Error.LINE_ERROR_QUOTE:
+            return Localizer.get().response_checker_line_error_quote
         elif error == ResponseChecker.Error.FAIL_DEGRADATION:
             return Localizer.get().response_checker_fail_degradation
         else:

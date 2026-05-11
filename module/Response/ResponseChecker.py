@@ -8,6 +8,7 @@ from module.Config import Config
 from module.QualityRule.QualityRuleSnapshot import QualityRuleSnapshot
 from module.Filter.LanguageFilter import LanguageFilter
 from module.Filter.RuleFilter import RuleFilter
+from module.Fixer.PunctuationFixer import PunctuationFixer
 from module.Text.TextHelper import TextHelper
 from module.TextProcessor import TextProcessor
 
@@ -24,12 +25,14 @@ class ResponseChecker(Base):
         LINE_ERROR_HANGEUL = "LINE_ERROR_HANGEUL"
         LINE_ERROR_EMPTY_LINE = "LINE_ERROR_EMPTY_LINE"
         LINE_ERROR_SIMILARITY = "LINE_ERROR_SIMILARITY"
+        LINE_ERROR_QUOTE = "LINE_ERROR_QUOTE"
 
     LINE_ERROR: tuple[Error, ...] = (
         Error.LINE_ERROR_KANA,
         Error.LINE_ERROR_HANGEUL,
         Error.LINE_ERROR_EMPTY_LINE,
         Error.LINE_ERROR_SIMILARITY,
+        Error.LINE_ERROR_QUOTE,
     )
 
     # 重试次数阈值
@@ -122,6 +125,11 @@ class ResponseChecker(Base):
             if rule is not None:
                 src = rule.sub("", src)
                 dst = rule.sub("", dst)
+
+            # 引用引号数量错乱无法安全后处理，必须让翻译任务重试或切分。
+            if not PunctuationFixer.can_align_quote_delimiters(src, dst):
+                checks.append(__class__.Error.LINE_ERROR_QUOTE)
+                continue
 
             # 当原文语言为日语，且译文中包含平假名或片假名字符时，判断为 假名残留
             if (

@@ -135,6 +135,17 @@ class TestPromptBuilder:
 
         assert "BASE_LANG=EN TARGET=Chinese" in result
 
+    def test_builtin_translation_prompt_mentions_speech_quote_preservation(
+        self,
+    ) -> None:
+        zh_base = PromptBuilder.get_base(BaseLanguage.Enum.ZH)
+        en_base = PromptBuilder.get_base(BaseLanguage.Enum.EN)
+
+        assert "话语引用" in zh_base
+        assert "缩写" in zh_base
+        assert "speech quotation" in en_base
+        assert "contractions" in en_base
+
     def test_build_main_uses_custom_prompt_when_enabled(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

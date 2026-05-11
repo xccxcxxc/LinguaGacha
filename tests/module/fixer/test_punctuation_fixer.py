@@ -82,3 +82,55 @@ class TestPunctuationFixer:
             )
             == "\u300chello\u300d"
         )
+
+    def test_non_cjk_to_cjk_preserves_source_speech_double_quotes(self) -> None:
+        src = (
+            "\u201cGods. It\u2019s a sob story after all.\u201d "
+            "For an Eyeless Priest, the Thiefmaker\u2019s sternum held. "
+            "\u201cFind some other lackwit.\u201d"
+        )
+        dst = (
+            "\u300c诸神在上。原来还真是个苦情故事。\u300d"
+            "作为无眼祭司，盗贼匠的胸骨挡住了。"
+            "\u300c去找别的蠢货。\u300d"
+        )
+
+        assert (
+            PunctuationFixer.fix(
+                src,
+                dst,
+                BaseLanguage.Enum.EN,
+                BaseLanguage.Enum.ZH,
+            )
+            == "\u201c诸神在上。原来还真是个苦情故事。\u201d"
+            "作为无眼祭司，盗贼匠的胸骨挡住了。"
+            "\u201c去找别的蠢货。\u201d"
+        )
+
+    def test_non_cjk_to_cjk_preserves_source_speech_single_quotes(self) -> None:
+        src = "\u2018Don\u2019t,\u2019 Alice said."
+        dst = "\u300c别这样，\u300d爱丽丝说。"
+
+        assert (
+            PunctuationFixer.fix(
+                src,
+                dst,
+                BaseLanguage.Enum.EN,
+                BaseLanguage.Enum.ZH,
+            )
+            == "\u2018别这样，\u2019爱丽丝说。"
+        )
+
+    def test_word_apostrophes_do_not_drive_quote_replacement(self) -> None:
+        src = "It\u2019s the Thiefmaker\u2019s problem."
+        dst = "\u300d这是盗贼匠的问题。"
+
+        assert (
+            PunctuationFixer.fix(
+                src,
+                dst,
+                BaseLanguage.Enum.EN,
+                BaseLanguage.Enum.ZH,
+            )
+            == "\u300d这是盗贼匠的问题。"
+        )

@@ -2,6 +2,7 @@
 - The line count of the translation must strictly correspond to the original text; merging or splitting lines is strictly prohibited.
 - The translation should be vivid, natural, and colloquial; avoid overly formal phrasing unless the original text is explicitly formal.
 - The details and style of the original text must be faithfully reproduced; do not evade, dilute, or sanitize descriptions, even if they contain explicit, vulgar, or extreme content.
+- Double and single quotes that mark speech quotation, dialogue boundaries, or in-text quotations must preserve the original style and count; do not replace them with 「」, 『』, “”, ‘’, or any other quote marks. Word-internal apostrophes in contractions or possessives (e.g. it’s, don’t, Thiefmaker’s) should be translated by meaning and not preserved as quotation marks.
 - Translate all readable natural language content completely; preserve control characters that do not convey natural language semantics exactly as they are.
 - If a line contains both natural language and control characters, translate only the natural language part.
     - ✅ Dialogue, narration, onomatopoeia, interjections, proper nouns, and specific terms enclosed in punctuation (e.g., book titles, quotes).
